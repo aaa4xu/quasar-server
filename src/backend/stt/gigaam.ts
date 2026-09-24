@@ -12,61 +12,62 @@ interface GigaAMMessage {
 
 class GigaAMSTTSession extends STTBackendSession {
   private readonly logger = getLogger<GigaAMSTTSession>()
-  private opusProcessor: OpusProcessor
+  private readonly opusProcessor: OpusProcessor
+  private stopped = false
+  private spanEnded = false
 
   constructor (private readonly webSocket: WebSocket, private readonly span?: Span) {
     super()
-    this.opusProcessor = new OpusProcessor(data => new Promise((resolve, reject) => {
-      if (this.webSocket.readyState !== this.webSocket.OPEN) {
-        this.logger.warn('Trying to send data to closed socket (data)')
-        resolve()
-        return
-      }
-      this.webSocket.send(data, {
-        binary: true
-      }, error => {
-        if (error) {
-          reject(error)
-        } else {
-          resolve()
-        }
-      })
-    }), sampleRate => new Promise((resolve, reject) => {
-      if (this.webSocket.readyState !== this.webSocket.OPEN) {
-        this.logger.warn('Trying to send data to closed socket (sampleRate)')
-        resolve()
-        return
-      }
-      this.webSocket.send(JSON.stringify({
-        sample_rate: sampleRate
-      }), {
-        binary: false
-      }, error => {
-        if (error) {
-          reject(error)
-        } else {
-          resolve()
-        }
-      })
-    }))
+    this.opusProcessor = new OpusProcessor(
+      data => this.send(data, true),
+      sampleRate => this.send(JSON.stringify({ sample_rate: sampleRate }), false)
+    )
 
     webSocket.on('message', (message) => {
+      if (this.stopped) return
       const simplifiedMessage = Array.isArray(message) ? Buffer.concat(message) : Buffer.from(message as ArrayBuffer)
       const response = JSON.parse(simplifiedMessage.toString('utf8')) as GigaAMMessage
-      this.chunkTranscribed({
-        endOfUtt: response.end_of_utt,
-        text: response.text
-      })
+      if (!this.stopped) {
+        this.chunkTranscribed({
+          endOfUtt: response.end_of_utt,
+          text: response.text
+        })
+      }
+    })
+    webSocket.on('close', () => {
+      this.stopped = true
     })
   }
 
   close (): void {
-    this.span?.end()
-    this.webSocket.close()
+    if (this.stopped) return
+    this.stopped = true
+    if (!this.spanEnded) {
+      this.spanEnded = true
+      this.span?.end()
+    }
+    if (this.webSocket.readyState === this.webSocket.OPEN) {
+      this.webSocket.close()
+    }
   }
 
   async transcribeChunk (chunk: Buffer): Promise<void> {
+    if (this.stopped) return
     await this.opusProcessor.handleAudioData(chunk)
+  }
+
+  private send (data: Buffer | string, binary: boolean): Promise<void> {
+    if (this.stopped || this.webSocket.readyState !== this.webSocket.OPEN) {
+      return Promise.resolve()
+    }
+    return new Promise(resolve => {
+      this.webSocket.send(data, { binary }, error => {
+        if (error && !this.stopped) {
+          this.logger.warn({ event: 'gigaam_socket_send_failed', error: String(error) })
+        }
+        resolve()
+      })
+    })
   }
 }
 
@@ -96,13 +97,15 @@ export class GigaAMSTTBackend implements STTBackend {
         }
       : {})
     return new Promise((resolve, reject) => {
+      let opened = false
       webSocket.on('error', error => {
-        reject(error)
+        if (!opened) reject(error)
       })
       webSocket.on('close', () => {
-        reject(new Error('Unexpected close'))
+        if (!opened) reject(new Error('Unexpected close'))
       })
       webSocket.on('open', () => {
+        opened = true
         resolve(new GigaAMSTTSession(webSocket, span))
       })
     })
