@@ -485,6 +485,10 @@ function mapStationInfoToStationSyncInfoResponseConfig (info: StationInfo): unkn
       enabled: system.smartVolume.enabled
     },
     system_config: {
+      adbd: {
+        network: system.adbd.network,
+        remoteActivation: system.adbd.remoteActivation,
+      },
       addAllEmbeddedEndpoints: system.addAllEmbeddedEndpoints,
       appmetrikaReportEnvironment: environment,
       audioInput: {

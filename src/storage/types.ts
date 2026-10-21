@@ -102,6 +102,10 @@ const rawQuasarConfig = z.object({
     tvBeta: z.boolean().default(false)
   }),
   systemConfig: z.object({
+    adbd: z.object({
+      network: z.boolean().default(true),
+      remoteActivation: z.boolean().default(true)
+    }),
     addAllEmbeddedEndpoints: z.boolean().default(false),
     analyticsEnvironment: z.object({
       quasmodromGroup: z.string().default('production'),
