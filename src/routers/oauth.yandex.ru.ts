@@ -2,12 +2,18 @@ import bodyParser from 'body-parser'
 import { Application, Router } from 'express'
 import { createHash } from 'node:crypto'
 
+import { getLogger } from '../logger'
+
+const logger = getLogger()
+
 export function registerOAuthYandexRuRouter (app: Application): void {
   const router = Router()
 
   router.use(bodyParser.urlencoded())
 
   router.post('/token', (request, response) => {
+    logger.debug(`OAuth /token: ${JSON.stringify(request.body)}`)
+
     const grantType = String(request.body.grant_type)
     if (grantType === 'authorization_code') {
       const code = String(request.body.code)

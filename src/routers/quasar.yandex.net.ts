@@ -26,7 +26,9 @@ export function registerQuasarYandexNetRouter (app: Application, properties: Qua
     response.status(500).end()
   })
 
-  router.post('/register', (_request, response) => {
+  router.post('/register', (request, response) => {
+    logger.debug(`Register on Quasar: ${JSON.stringify(request.query)}`)
+
     response.status(200).json({
       hasCriticalUpdate: false,
       status: 'ok'
