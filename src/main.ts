@@ -15,6 +15,7 @@ import { getEnvironment } from './environment'
 import { getLogger } from './logger'
 import proto from './protos/protos'
 import { registerClckYandexNetRouter } from './routers/clck.yandex.net'
+import { registerOAuthYandexRuRouter } from './routers/oauth.yandex.ru'
 import { registerQuasarYandexNetRouter } from './routers/quasar.yandex.net'
 import { registerReportAppMetricaYandexNetRouter } from './routers/report.appmetrica.yandex.net'
 import { registerUniproxyAliceYandexNetRouter } from './routers/uniproxy.alice.yandex.net'
@@ -70,6 +71,7 @@ registerQuasarYandexNetRouter(app, {
   glagolJwtKey: environment.GLAGOL_JWT_KEY,
   infoProvider: storage
 })
+registerOAuthYandexRuRouter(app)
 const uniProxyRouter = registerUniproxyAliceYandexNetRouter({
   audioMetadata: new BufferedAudioMetadataBackend(environment.AUDIO_METADATA_URLS),
   processor: new BasicProcessorBackend(environment.PROCESSOR_BASIC_URL),

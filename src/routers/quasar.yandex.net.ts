@@ -26,6 +26,13 @@ export function registerQuasarYandexNetRouter (app: Application, properties: Qua
     response.status(500).end()
   })
 
+  router.post('/register', (_request, response) => {
+    response.status(200).json({
+      hasCriticalUpdate: false,
+      status: 'ok'
+    })
+  })
+
   router.post('/update_device_state', async (request, response) => {
     try {
       const duid = String(request.query['device_id'])

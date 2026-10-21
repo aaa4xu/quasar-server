@@ -1,0 +1,37 @@
+import bodyParser from 'body-parser'
+import { Application, Router } from 'express'
+import { createHash } from 'node:crypto'
+
+export function registerOAuthYandexRuRouter (app: Application): void {
+  const router = Router()
+
+  router.use(bodyParser.urlencoded())
+
+  router.post('/token', (request, response) => {
+    const grantType = String(request.body.grant_type)
+    if (grantType === 'authorization_code') {
+      const code = String(request.body.code)
+      const deviceId = String(request.body.device_id)
+      response.status(200).json({
+        access_token: `QAT.${createHash('sha256').update('access').update(code).update(deviceId).digest('hex')}`,
+        expires_in: 365 * 10 * 24 * 60 * 60,
+        refresh_token: `QRT.${createHash('sha256').update('refresh').update(code).update(deviceId).digest('hex')}`,
+        token_type: 'bearer'
+      })
+      return
+    }
+    if (grantType === 'x-token') {
+      const accessToken = String(request.body.access_token)
+      response.status(200).json({
+        access_token: accessToken,
+        expires_in: 365 * 10 * 24 * 60 * 60,
+        token_type: 'bearer',
+        uid: 10_146_228
+      })
+      return
+    }
+    response.status(500).end()
+  })
+
+  app.use('/oauth.yandex.ru', router)
+}
