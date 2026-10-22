@@ -84,6 +84,7 @@ registerOAuthYandexRuRouter(app)
 registerMobileproxyPassportYandexNetRouter(app)
 registerStartupMobileYandexNetRouter(app)
 registerScbhYandexNetRouter(app)
+registerRpcAliceYandexNetRouter(app)
 const uniProxyRouter = registerUniproxyAliceYandexNetRouter({
   audioMetadata: new BufferedAudioMetadataBackend(environment.AUDIO_METADATA_URLS),
   processor: new BasicProcessorBackend(environment.PROCESSOR_BASIC_URL),
