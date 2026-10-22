@@ -19,6 +19,7 @@ import { registerMobileproxyPassportYandexNetRouter } from './routers/mobileprox
 import { registerOAuthYandexRuRouter } from './routers/oauth.yandex.ru'
 import { registerQuasarYandexNetRouter } from './routers/quasar.yandex.net'
 import { registerReportAppMetricaYandexNetRouter } from './routers/report.appmetrica.yandex.net'
+import { registerRpcAliceYandexNetRouter } from './routers/rpc.alice.yandex.net'
 import { registerScbhYandexNetRouter } from './routers/scbh.yandex.net'
 import { registerStartupMobileYandexNetRouter } from './routers/startup.mobile.yandex.net'
 import { registerUniproxyAliceYandexNetRouter } from './routers/uniproxy.alice.yandex.net'
