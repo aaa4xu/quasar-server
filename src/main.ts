@@ -249,13 +249,13 @@ apiServer.patch('/devices/:duid', async ({ body, params: { duid } }) => {
   })
 })
 
-// try {
-//   apiServer.listen(environment.API_PORT, () => {
-//     logger.info(`Started API on :${environment.API_PORT}`)
-//   })
-// } catch (error) {
-//   logger.error(`API failed to start on :${environment.API_PORT}: ${error}`)
-// }
+try {
+  apiServer.listen(environment.API_PORT, () => {
+    logger.info(`Started API on :${environment.API_PORT}`)
+  })
+} catch (error) {
+  logger.error(`API failed to start on :${environment.API_PORT}: ${error}`)
+}
 
 app.use((request, response) => {
   logger.debug(`Got unknown request: ${request.method} ${request.url}`)
