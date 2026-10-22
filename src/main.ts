@@ -19,6 +19,7 @@ import { registerMobileproxyPassportYandexNetRouter } from './routers/mobileprox
 import { registerOAuthYandexRuRouter } from './routers/oauth.yandex.ru'
 import { registerQuasarYandexNetRouter } from './routers/quasar.yandex.net'
 import { registerReportAppMetricaYandexNetRouter } from './routers/report.appmetrica.yandex.net'
+import { registerScbhYandexNetRouter } from './routers/scbh.yandex.net'
 import { registerStartupMobileYandexNetRouter } from './routers/startup.mobile.yandex.net'
 import { registerUniproxyAliceYandexNetRouter } from './routers/uniproxy.alice.yandex.net'
 import { UniProxyConnection } from './routers/uniproxy/uniproxy-connection'
@@ -82,6 +83,7 @@ registerQuasarYandexNetRouter(app, {
 registerOAuthYandexRuRouter(app)
 registerMobileproxyPassportYandexNetRouter(app)
 registerStartupMobileYandexNetRouter(app)
+registerScbhYandexNetRouter(app)
 const uniProxyRouter = registerUniproxyAliceYandexNetRouter({
   audioMetadata: new BufferedAudioMetadataBackend(environment.AUDIO_METADATA_URLS),
   processor: new BasicProcessorBackend(environment.PROCESSOR_BASIC_URL),
