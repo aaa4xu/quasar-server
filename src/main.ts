@@ -15,16 +15,23 @@ import { getEnvironment } from './environment'
 import { getLogger } from './logger'
 import proto from './protos/protos'
 import { registerClckYandexNetRouter } from './routers/clck.yandex.net'
+import { registerMobileproxyPassportYandexNetRouter } from './routers/mobileproxy.passport.yandex.net'
 import { registerOAuthYandexRuRouter } from './routers/oauth.yandex.ru'
 import { registerQuasarYandexNetRouter } from './routers/quasar.yandex.net'
 import { registerReportAppMetricaYandexNetRouter } from './routers/report.appmetrica.yandex.net'
+import { registerStartupMobileYandexNetRouter } from './routers/startup.mobile.yandex.net'
 import { registerUniproxyAliceYandexNetRouter } from './routers/uniproxy.alice.yandex.net'
 import { UniProxyConnection } from './routers/uniproxy/uniproxy-connection'
 import { PostgresDatabaseStationInfoStorage } from './storage/database'
 import { quasarConfig } from './storage/types'
+import { loadUpdatesConfig } from './updates'
 
 const logger = getLogger()
 const environment = getEnvironment()
+
+const updatesConfig = environment.ALLOW_UPDATES && environment.UPDATES_CONFIG_PATH
+  ? loadUpdatesConfig(environment.UPDATES_CONFIG_PATH)
+  : { updates: {} }
 
 Sentry.init({
   defaultIntegrations: false,
@@ -69,9 +76,12 @@ registerClckYandexNetRouter(app)
 registerReportAppMetricaYandexNetRouter(app)
 registerQuasarYandexNetRouter(app, {
   glagolJwtKey: environment.GLAGOL_JWT_KEY,
-  infoProvider: storage
+  infoProvider: storage,
+  updatesConfig
 })
 registerOAuthYandexRuRouter(app)
+registerMobileproxyPassportYandexNetRouter(app)
+registerStartupMobileYandexNetRouter(app)
 const uniProxyRouter = registerUniproxyAliceYandexNetRouter({
   audioMetadata: new BufferedAudioMetadataBackend(environment.AUDIO_METADATA_URLS),
   processor: new BasicProcessorBackend(environment.PROCESSOR_BASIC_URL),
@@ -239,13 +249,13 @@ apiServer.patch('/devices/:duid', async ({ body, params: { duid } }) => {
   })
 })
 
-try {
-  apiServer.listen(environment.API_PORT, () => {
-    logger.info(`Started API on :${environment.API_PORT}`)
-  })
-} catch (error) {
-  logger.error(`API failed to start on :${environment.API_PORT}: ${error}`)
-}
+// try {
+//   apiServer.listen(environment.API_PORT, () => {
+//     logger.info(`Started API on :${environment.API_PORT}`)
+//   })
+// } catch (error) {
+//   logger.error(`API failed to start on :${environment.API_PORT}: ${error}`)
+// }
 
 app.use((request, response) => {
   logger.debug(`Got unknown request: ${request.method} ${request.url}`)

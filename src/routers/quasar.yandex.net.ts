@@ -3,12 +3,14 @@ import { jwtVerify, SignJWT } from 'jose'
 
 import { getLogger } from '../logger'
 import { StationInfo, StationInfoProvider } from '../storage/types'
+import { UpdatesConfig } from '../updates'
 
 const logger = getLogger()
 
 interface QuasarRouterProperties {
   glagolJwtKey: string
   infoProvider: StationInfoProvider
+  updatesConfig: UpdatesConfig
 }
 
 export function registerQuasarYandexNetRouter (app: Application, properties: QuasarRouterProperties): void {
@@ -17,8 +19,27 @@ export function registerQuasarYandexNetRouter (app: Application, properties: Qua
   router.get('/check_updates', (request, response) => {
     logger.debug(`Requested updates: ${JSON.stringify(request.query)}`)
 
+    const platform = String(request.query['platform'])
+    const version = String(request.query['version'])
+
+    const update = properties.updatesConfig.updates[platform]
+
+    if (!update || update.version === version) {
+      response.json({
+        hasUpdate: false
+      })
+      return
+    }
+
     response.json({
-      hasUpdate: false
+      crc32: update.crc32,
+      critical: true,
+      downloadUrl: update.downloadUrl,
+      fallbackIp: '127.0.0.1', // meh
+      fallbackUrl: update.fallbackUrl ?? update.downloadUrl,
+      hasUpdate: true,
+      updateId: update.updateId,
+      version: update.version
     })
   })
 
@@ -29,8 +50,13 @@ export function registerQuasarYandexNetRouter (app: Application, properties: Qua
   router.post('/register', (request, response) => {
     logger.debug(`Register on Quasar: ${JSON.stringify(request.query)}`)
 
+    const platform = String(request.query['platform'])
+    const version = String(request.query['firmware_version'])
+
+    const update = properties.updatesConfig.updates[platform]
+
     response.status(200).json({
-      hasCriticalUpdate: false,
+      hasCriticalUpdate: update && update.version !== version,
       status: 'ok'
     })
   })

@@ -19,9 +19,9 @@ export function registerOAuthYandexRuRouter (app: Application): void {
       const code = String(request.body.code)
       const deviceId = String(request.body.device_id)
       response.status(200).json({
-        access_token: `QAT.${createHash('sha256').update('access').update(code).update(deviceId).digest('hex')}`,
+        access_token: `VAT.${createHash('sha256').update('access').update(code).update(deviceId).digest('hex')}`,
         expires_in: 365 * 10 * 24 * 60 * 60,
-        refresh_token: `QRT.${createHash('sha256').update('refresh').update(code).update(deviceId).digest('hex')}`,
+        refresh_token: `VRT.${createHash('sha256').update('refresh').update(code).update(deviceId).digest('hex')}`,
         token_type: 'bearer'
       })
       return
