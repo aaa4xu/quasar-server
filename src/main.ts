@@ -8,11 +8,15 @@ import { OpenAI } from 'openai'
 import z from 'zod'
 
 import { BufferedAudioMetadataBackend } from './backend/audio-metadata/buffered'
+import { BasicMusicBackend } from './backend/music/basic'
+import { StubMusicBackend } from './backend/music/stub'
 import { BasicProcessorBackend } from './backend/processors/basic'
 import { GigaAMSTTBackend } from './backend/stt/gigaam'
 import { OpenAITTSBackend } from './backend/tts/openai'
 import { getEnvironment } from './environment'
 import { getLogger } from './logger'
+import { MusicManager } from './music/manager'
+import { encodeProtobufStruct } from './protobuf'
 import proto from './protos/protos'
 import { pushUpdateConfigDirective } from './routers/alice/directives'
 import { registerClckYandexNetRouter } from './routers/clck.yandex.net'
@@ -87,8 +91,12 @@ registerMobileproxyPassportYandexNetRouter(app)
 registerStartupMobileYandexNetRouter(app)
 registerScbhYandexNetRouter(app)
 registerRpcAliceYandexNetRouter(app)
+
 const uniProxyRouter = registerUniproxyAliceYandexNetRouter({
   audioMetadata: new BufferedAudioMetadataBackend(environment.AUDIO_METADATA_URLS),
+  musicManager: new MusicManager(environment.MUSIC_SERVICE_BASIC_URL
+    ? new BasicMusicBackend(environment.MUSIC_SERVICE_BASIC_URL)
+    : new StubMusicBackend()),
   processor: new BasicProcessorBackend(environment.PROCESSOR_BASIC_URL),
   stt: new GigaAMSTTBackend(environment.STT_GIGAAM_URL),
   tts: new OpenAITTSBackend(new OpenAI({
@@ -194,7 +202,7 @@ apiServer.post('/devices/:duid/push-raw', async ({ body, params: { duid } }) => 
 
 apiServer.post('/devices/:duid/push-directive', async ({ body, params: { duid } }) => {
   runForConnections(duid, connection => {
-    connection.pushRawDirective(proto.NAlice.NAliceApi.TDirective.fromObject(body as { [k: string]: unknown }))
+    connection.pushRawDirectives(proto.NAlice.NAliceApi.TDirective.fromObject(body as { [k: string]: unknown }))
       .catch(error => logger.warn(`Failed to push raw directive to UniProxy connection: ${error}`))
   })
 
@@ -219,7 +227,7 @@ apiServer.patch('/devices/:duid', async ({ body, params: { duid } }) => {
   const info = await storage.updateNameAndQuasarConfig(duid, body.name, body.quasarConfig)
 
   runForConnections(duid, connection => {
-    connection.pushDirective(pushUpdateConfigDirective).catch(error =>
+    connection.pushDirectives(pushUpdateConfigDirective).catch(error =>
       logger.warn(`Failed to push config update directive to UniProxy connection: ${error}`))
   })
 
@@ -260,4 +268,11 @@ try {
 app.use((request, response) => {
   logger.debug(`Got unknown request: ${request.method} ${request.url}`)
   response.status(500).end()
+})
+
+process.on('SIGINT', () => {
+  logger.info('Stopping...')
+  apiServer.stop()
+  server.close()
+  logger.info('Stopped')
 })

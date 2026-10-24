@@ -5,12 +5,13 @@ import { RawData, WebSocket } from 'ws'
 
 import { AudioMetadataBackend, ProcessorBackend, STTBackend, TTSBackend } from '../../backend/backend'
 import { getLogger } from '../../logger'
+import { MusicManager } from '../../music/manager'
 import { decodeProtobufStruct, getValue } from '../../protobuf'
 import proto from '../../protos/protos'
 import { getDirectiveFunctionProvider } from '../alice/base-provider'
-import { mmSemanticFrame, TDirective } from '../alice/directives'
+import { audioPlayDirective, mmSemanticFrame, RawDirective, stackRecoverNextTrackDirective, WrappedDirective } from '../alice/directives'
 import { continueSessionStage2SemanticFrame, externalEventSemanticFrame, ttsSemanticFrame } from '../alice/typed-payloads'
-import { InputHandler, InputResult, TextInput } from './input-handler'
+import { InputHandler, InputMetadata, InputResult, TextInput } from './input-handler'
 import { VoiceInputHandler } from './voice-input-handler'
 
 type TServerMessage = proto.NAlice.NAliceApi.ITServerMessage
@@ -31,6 +32,7 @@ enum CloseDialogReason {
 
 export interface UniProxyConnectionParameters {
   audioMetadata: AudioMetadataBackend
+  musicManager: MusicManager
   processor: ProcessorBackend
   stt: STTBackend
   tts: TTSBackend
@@ -58,7 +60,9 @@ export class UniProxyConnection {
 
   private voiceInputStreamId: Long | number = -1
 
-  constructor (private readonly webSocket: WebSocket, private readonly parameters: UniProxyConnectionParameters) {
+  constructor (private readonly webSocket: WebSocket,
+    private readonly deviceId: string,
+    private readonly parameters: UniProxyConnectionParameters) {
     this.voiceInputHandler = new VoiceInputHandler(parameters)
     this.inputHandler = new InputHandler({
       ...parameters,
@@ -69,24 +73,82 @@ export class UniProxyConnection {
     this.setupVoiceInputHandlers()
   }
 
-  async pushDirective (...directives: TDirective[]): Promise<void> {
-    await this.sendPush(directives)
+  async processWrappedDirectives (directives: WrappedDirective[], metadata?: InputMetadata): Promise<RawDirective[]> {
+    const rawDirectives: RawDirective[] = []
+    for (const directive of directives) {
+      if (directive.quasarDirective) {
+        rawDirectives.push(directive.quasarDirective)
+      }
+      if (directive.internalDirective) {
+        switch (directive.internalDirective.type) {
+          case 'music_next_track': {
+            await this.parameters.musicManager.advanceQueueForward(this.deviceId)
+            const track = await this.parameters.musicManager.getCurrentTrack(this.deviceId)
+            if (track) {
+              rawDirectives.push(audioPlayDirective(track).quasarDirective,
+                stackRecoverNextTrackDirective.quasarDirective)
+            }
+            break
+          }
+          case 'music_play': {
+            const track = await this.parameters.musicManager.getCurrentTrack(this.deviceId)
+            if (track) {
+              rawDirectives.push(audioPlayDirective(track,
+                this.parameters.musicManager.getLastSavedPosition(this.deviceId)).quasarDirective,
+              stackRecoverNextTrackDirective.quasarDirective)
+            }
+            break
+          }
+          case 'music_previous_track': {
+            await this.parameters.musicManager.advanceQueueBackward(this.deviceId)
+            const track = await this.parameters.musicManager.getCurrentTrack(this.deviceId)
+            if (track) {
+              rawDirectives.push(audioPlayDirective(track).quasarDirective,
+                stackRecoverNextTrackDirective.quasarDirective)
+            }
+            break
+          }
+          case 'music_recover_commit': {
+            await this.parameters.musicManager.recoverCommit(this.deviceId,
+              directive.internalDirective.recoverCommitToken)
+            break
+          }
+          case 'music_recover_next_track': {
+            const recover = await this.parameters.musicManager.getNextTrack(this.deviceId)
+            if (recover) {
+              rawDirectives.push(audioPlayDirective(recover.track, 0, recover.recoverCommitToken).quasarDirective,
+                stackRecoverNextTrackDirective.quasarDirective)
+            }
+            break
+          }
+          case 'music_stop': {
+            const position = metadata?.deviceState?.AudioPlayer?.OffsetMs
+            if (position) {
+              this.parameters.musicManager.savePosition(this.deviceId, position)
+            }
+            break
+          }
+        }
+      }
+    }
+    return rawDirectives
+  }
+
+  async pushDirectives (...directives: WrappedDirective[]): Promise<void> {
+    const rawDirectives = await this.processWrappedDirectives(directives)
+    await this.pushRawDirectives(...rawDirectives)
   }
 
   async pushEvent (text: string): Promise<void> {
-    await this.sendPush([
-      mmSemanticFrame(externalEventSemanticFrame(text))
-    ])
+    await this.pushDirectives(mmSemanticFrame(externalEventSemanticFrame(text)))
   }
 
-  async pushRawDirective (directive: proto.NAlice.NAliceApi.ITDirective): Promise<void> {
-    await this.sendPush([directive])
+  async pushRawDirectives (...directives: proto.NAlice.NAliceApi.ITDirective[]): Promise<void> {
+    await this.sendPush(directives)
   }
 
   async pushTts (text: string): Promise<void> {
-    await this.sendPush([
-      mmSemanticFrame(ttsSemanticFrame(text))
-    ])
+    await this.pushDirectives(mmSemanticFrame(ttsSemanticFrame(text)))
   }
 
   private closeConnection (): void {
@@ -269,14 +331,19 @@ export class UniProxyConnection {
 
     const event = clientMessage.Event!.TextInput!.Request!.Event!
 
+    const metadata = {
+      deviceState: proto.NAlice.NAliceApi.TDeviceState.decode(
+        clientMessage.Event!.TextInput!.Request!.DeviceStateRaw!)
+    }
+
     if (event.Type === proto.NAlice.EEventType.server_action && event.Payload) {
       const payload = decodeProtobufStruct(event.Payload)
       if (getValue(payload, 'any', 'typed_semantic_frame', 'music_play_semantic_frame')) {
         textInput = {
           data: {
-            kind: 'playButtonPress'
+            kind: 'playButtonPressPlay'
           },
-          metadata: {}
+          metadata
         }
       } else if (getValue(payload, 'string', 'typed_semantic_frame', 'external_event_semantic_frame', 'event')) {
         textInput = {
@@ -284,7 +351,7 @@ export class UniProxyConnection {
             eventText: getValue(payload, 'string', 'typed_semantic_frame', 'external_event_semantic_frame', 'event')!,
             kind: 'event'
           },
-          metadata: {}
+          metadata
         }
       } else if (getValue(payload, 'string', 'typed_semantic_frame', 'tts_semantic_frame', 'text')) {
         textInput = {
@@ -292,19 +359,32 @@ export class UniProxyConnection {
             kind: 'tts',
             text: getValue(payload, 'string', 'typed_semantic_frame', 'tts_semantic_frame', 'text')!
           },
-          metadata: {}
+          metadata
         }
       } else if (getValue(payload, 'any', 'typed_semantic_frame', 'continue_session_stage1_semantic_frame')) {
-        await this.sendPush([
-          mmSemanticFrame(continueSessionStage2SemanticFrame(this.dialogId))
-        ])
+        await this.pushDirectives(mmSemanticFrame(continueSessionStage2SemanticFrame(this.dialogId)))
       } else if (getValue(payload, 'any', 'typed_semantic_frame', 'continue_session_stage2_semantic_frame')) {
         dialogId = getValue(payload, 'string', 'typed_semantic_frame', 'continue_session_stage2_semantic_frame', 'dialog_id')
         textInput = {
           data: {
             kind: 'continue'
           },
-          metadata: {}
+          metadata
+        }
+      } else if (getValue(payload, 'string', 'music', 'type') === 'fetchNextTrack') {
+        textInput = {
+          data: {
+            kind: 'musicFetchNextTrack'
+          },
+          metadata
+        }
+      } else if (getValue(payload, 'string', 'music', 'type') === 'recoverCommit') {
+        textInput = {
+          data: {
+            kind: 'musicRecoverCommit',
+            recoverCommitToken: getValue(payload, 'string', 'music', 'recoverCommitToken')!
+          },
+          metadata
         }
       } else {
         this.logger.info(`Received unknown TextInput server_action: ${JSON.stringify(payload)} ${JSON.stringify(event)}`)
@@ -315,12 +395,27 @@ export class UniProxyConnection {
       if (decoded?.TypedSemanticFrame?.MusicPlaySemanticFrame) {
         textInput = {
           data: {
-            kind: 'playButtonPress'
+            kind: 'playButtonPressPlay'
           },
-          metadata: {}
+          metadata
+        }
+      } else if (decoded?.TypedSemanticFrame?.PlayerContinueSemanticFrame) {
+        textInput = {
+          data: {
+            kind: 'playButtonPressPlay'
+          },
+          metadata
         }
       } else {
         this.logger.info(`Received unknown TextInput semantic frame: ${JSON.stringify(decoded)} ${JSON.stringify(event)}`)
+      }
+    } else if (event.Type === proto.NAlice.EEventType.text_input) {
+      textInput = {
+        data: {
+          kind: 'text',
+          text: event.Text!
+        },
+        metadata
       }
     } else {
       this.logger.info(`Received unknown TextInput: ${JSON.stringify(event)}`)
@@ -353,7 +448,7 @@ export class UniProxyConnection {
     }
 
     try {
-      await this.sendInputResult(inputResult, clientMessage.Event!.TextInput!.Header!.RequestId!,
+      await this.sendInputResult(inputResult, metadata, clientMessage.Event!.TextInput!.Header!.RequestId!,
         clientMessage.Event!.Header!.MessageId!, clientMessage.Event!.TextInput!.Header!.SequenceNumber!)
     } catch (error) {
       this.logger.warn('Failed to send input result: ', error)
@@ -372,7 +467,6 @@ export class UniProxyConnection {
   }
 
   private async handleTextMessage (_message: string): Promise<void> {
-    this.logger.debug(_message)
     // ignore for now
   }
 
@@ -399,6 +493,10 @@ export class UniProxyConnection {
     this.voiceInputReferenceRequestId = voiceInputHeader.RequestId!
     this.voiceInputReferenceSequenceNumber = voiceInputHeader.SequenceNumber!
     this.voiceInputHandler.handleVoiceInputEvent({
+      metadata: {
+        deviceState: proto.NAlice.NAliceApi.TDeviceState.decode(
+          clientMessage.Event!.VoiceInput!.Request!.DeviceStateRaw!)
+      },
       parentSpan: this.inputSpan ?? this.dialogSpan
     })
   }
@@ -427,7 +525,7 @@ export class UniProxyConnection {
     })
   }
 
-  private async sendAliceResponse (text: null | string, directives: TDirective[],
+  private async sendAliceResponse (text: null | string, directives: RawDirective[],
     shouldListen: boolean, requestId: string,
     referenceMessageId: string, sequenceNumber: number) {
     await this.sendServerMessage({
@@ -516,10 +614,11 @@ export class UniProxyConnection {
     await this.sendRawData(audioDataMessage, true)
   }
 
-  private async sendInputResult (result: InputResult, requestId: string,
+  private async sendInputResult (result: InputResult, metadata: InputMetadata, requestId: string,
     referenceMessageId: string, sequenceNumber: number): Promise<void> {
     try {
-      await this.sendAliceResponse(result.text, result.directives, result.shouldListen,
+      const rawDirectives = await this.processWrappedDirectives(result.directives, metadata)
+      await this.sendAliceResponse(result.text, rawDirectives, result.shouldListen,
         requestId, referenceMessageId, sequenceNumber)
     } catch (error) {
       this.logger.error('Failed to send AliceResponse in sendInputResult: ', error)
@@ -569,7 +668,7 @@ export class UniProxyConnection {
     }
   }
 
-  private async sendPush (directives: TDirective[]): Promise<void> {
+  private async sendPush (directives: RawDirective[]): Promise<void> {
     await this.sendServerMessage({
       Event: {
         Header: {
@@ -665,7 +764,7 @@ export class UniProxyConnection {
       }
 
       try {
-        await this.sendInputResult(inputResult, this.voiceInputReferenceRequestId,
+        await this.sendInputResult(inputResult, event.metadata, this.voiceInputReferenceRequestId,
           this.voiceInputReferenceMessageId, this.voiceInputReferenceSequenceNumber)
       } catch (error) {
         this.logger.warn('Failed to send input result: ', error)

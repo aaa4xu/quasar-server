@@ -13,8 +13,8 @@ interface GigaAMMessage {
 class GigaAMSTTSession extends STTBackendSession {
   private readonly logger = getLogger<GigaAMSTTSession>()
   private readonly opusProcessor: OpusProcessor
-  private stopped = false
   private spanEnded = false
+  private stopped = false
 
   constructor (private readonly webSocket: WebSocket, private readonly span?: Span) {
     super()
@@ -63,7 +63,7 @@ class GigaAMSTTSession extends STTBackendSession {
     return new Promise(resolve => {
       this.webSocket.send(data, { binary }, error => {
         if (error && !this.stopped) {
-          this.logger.warn({ event: 'gigaam_socket_send_failed', error: String(error) })
+          this.logger.warn({ error: String(error), event: 'gigaam_socket_send_failed' })
         }
         resolve()
       })

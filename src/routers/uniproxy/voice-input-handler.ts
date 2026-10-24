@@ -4,6 +4,7 @@ import EventEmitter from 'node:events'
 
 import { AudioMetadataBackend, AudioMetadataBackendSession, STTBackend, STTBackendSession } from '../../backend/backend'
 import { getLogger } from '../../logger'
+import { InputMetadata } from './input-handler'
 
 export interface VoiceInputAudioEvent {
   buffer: Buffer
@@ -14,6 +15,7 @@ export interface VoiceInputCancelEvent {
 }
 
 export interface VoiceInputEvent {
+  metadata: InputMetadata
   parentSpan?: Span
 }
 
@@ -32,7 +34,7 @@ export interface VoiceInputHandlerEvents {
 }
 
 export interface VoiceInputHandlerFinishEvent {
-  metadata: object
+  metadata: InputMetadata
   text: string
 }
 
@@ -52,11 +54,11 @@ export interface VoiceInputSpeakerMetadataEvent {
 // eslint-disable-next-line unicorn/prefer-event-target
 export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
   private audioDataQueue: Buffer[] = []
-  private audioMetadata: object = {}
   private audioMetadataSession: AudioMetadataBackendSession | null = null
   private audioSendingLock = new Sema(1)
   private lastTranscribeResult: string = ''
   private readonly logger = getLogger<VoiceInputHandler>()
+  private metadata: InputMetadata = {}
   private sttSession: null | STTBackendSession = null
   private voiceSpan: null | Span = null
 
@@ -71,7 +73,7 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
     this.sttSession = null
     this.audioDataQueue = []
     this.lastTranscribeResult = ''
-    this.audioMetadata = {}
+    this.metadata = {}
 
     this.voiceSpan?.setAttribute('endReason', 'close')
     this.voiceSpan?.end()
@@ -172,15 +174,15 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
 
   async handleVoiceInputSpeakerMetadataEvent (request: VoiceInputSpeakerMetadataEvent): Promise<void> {
     this.logger.debug('VoiceInputHandler received Metadata')
-    this.audioMetadata = {
-      ...this.audioMetadata,
+    this.metadata = {
+      ...this.metadata,
       ...request.metadata
     }
   }
 
   private async stop (): Promise<void> {
-    this.audioMetadata = {
-      ...this.audioMetadata,
+    this.metadata = {
+      ...this.metadata,
       ...(await this.audioMetadataSession?.finish())
     }
     this.audioMetadataSession = null
@@ -189,17 +191,17 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
     this.audioDataQueue = []
     this.voiceSpan?.setAttribute('endReason', 'finish')
     this.voiceSpan?.setAttribute('text', this.lastTranscribeResult)
-    this.voiceSpan?.setAttribute('metadata', JSON.stringify(this.audioMetadata, undefined, 2))
+    this.voiceSpan?.setAttribute('metadata', JSON.stringify(this.metadata, undefined, 2))
     this.voiceSpan?.end()
     this.voiceSpan = null
   }
 
   private transcribeFinished (): void {
-    const audioMetadata = this.audioMetadata
-    this.audioMetadata = {}
+    const metadata = this.metadata
+    this.metadata = {}
     this.logger.debug(`VoiceInputHandler transcribe finished: ${this.lastTranscribeResult}`)
     this.emit('finish', {
-      metadata: audioMetadata,
+      metadata: metadata!,
       text: this.lastTranscribeResult
     })
   }

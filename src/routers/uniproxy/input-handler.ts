@@ -3,11 +3,13 @@ import { Span, startInactiveSpan } from '@sentry/node'
 import { ProcessorBackend, ProcessorPartialResponse, ProcessorSession } from '../../backend/backend'
 import { getLogger } from '../../logger'
 import { Notifier } from '../../notifier'
-import { DirectiveFunctionProvider, mmSemanticFrame, TDirective, ttsPlayPlaceholderDirective } from '../alice/directives'
+import proto from '../../protos/protos'
+import { textToDirectiveMap } from '../alice/base-provider'
+import { DirectiveFunctionProvider, mmSemanticFrame, ttsPlayPlaceholderDirective, WrappedDirective } from '../alice/directives'
 import { continueSessionStage1SemanticFrame } from '../alice/typed-payloads'
 
 export interface Input {
-  metadata: object
+  metadata: InputMetadata
 }
 
 export interface InputHandlerProperties {
@@ -15,9 +17,13 @@ export interface InputHandlerProperties {
   processor: ProcessorBackend
 }
 
+export type InputMetadata = Omit<object, 'deviceState'> & {
+  deviceState?: proto.NAlice.NAliceApi.ITDeviceState
+}
+
 export interface InputResult {
   dialogFinished: boolean
-  directives: TDirective[]
+  directives: WrappedDirective[]
   shouldListen: boolean
   text: null | string
 }
@@ -32,7 +38,15 @@ export type TextInputData = {
 } | {
   kind: 'continue'
 } | {
-  kind: 'playButtonPress'
+  kind: 'musicFetchNextTrack'
+} | {
+  kind: 'musicRecoverCommit'
+  recoverCommitToken: string
+} | {
+  kind: 'playButtonPressPlay'
+} | {
+  kind: 'text'
+  text: string
 } | {
   kind: 'tts'
   text: string
@@ -138,17 +152,61 @@ export class InputHandler {
         this.requestSent = true
         return await this.getPartialResponseResult(parentSpan)
       }
-      case 'playButtonPress': {
-        if (!this.session) {
-          await this.openSession(dialogSpan)
+      case 'musicFetchNextTrack': {
+        return {
+          dialogFinished: true,
+          directives: [{
+            internalDirective: {
+              type: 'music_recover_next_track'
+            }
+          }],
+          shouldListen: false,
+          text: null
         }
-        await this.session!.process({
-          isExternalEvent: true,
-          metadata: input.metadata,
-          text: 'play button pressed on speaker'
-        })
-        this.requestSent = true
-        return await this.getPartialResponseResult(parentSpan)
+      }
+      case 'musicRecoverCommit': {
+        return {
+          dialogFinished: true,
+          directives: [{
+            internalDirective: {
+              recoverCommitToken: input.data.recoverCommitToken,
+              type: 'music_recover_commit'
+            }
+          }],
+          shouldListen: false,
+          text: null
+        }
+      }
+      case 'playButtonPressPlay': {
+        return {
+          dialogFinished: true,
+          directives: [{
+            internalDirective: {
+              type: 'music_play'
+            }
+          }],
+          shouldListen: false,
+          text: null
+        }
+      }
+      case 'text': {
+        const directive = textToDirectiveMap[input.data.text]
+        if (!directive) {
+          this.logger.warn(`Received text TextInput with unknown text: '${input.data.text}'`)
+          return {
+            dialogFinished: true,
+            directives: [],
+            shouldListen: false,
+            text: null
+          }
+        }
+
+        return {
+          dialogFinished: true,
+          directives: [directive],
+          shouldListen: false,
+          text: null
+        }
       }
       case 'tts': {
         return {
@@ -188,8 +246,7 @@ export class InputHandler {
     if ((!this.session || !this.requestSent) && this.partialResponses.length === 0) {
       return {
         dialogFinished: true,
-        directives: [
-        ],
+        directives: [],
         shouldListen: false,
         text: null
       }
@@ -237,7 +294,8 @@ export class InputHandler {
         dialogFinished: !partialResponse.shouldListen,
         directives: [
           ...(partialResponse.directives.map(directive =>
-            this.properties.directiveFunctionProvider.convertToDirective(directive)).filter(Boolean) as TDirective[]),
+            this.properties.directiveFunctionProvider
+              .convertToWrappedDirective(directive)).filter(Boolean) as WrappedDirective[]),
           ttsPlayPlaceholderDirective()
         ],
         shouldListen: partialResponse.shouldListen,
@@ -254,8 +312,8 @@ export class InputHandler {
       dialogFinished: false,
       directives: [
         ...(partialResponse.directives.map(directive =>
-          this.properties.directiveFunctionProvider.convertToDirective(directive))
-          .filter(Boolean) as TDirective[]),
+          this.properties.directiveFunctionProvider.convertToWrappedDirective(directive))
+          .filter(Boolean) as WrappedDirective[]),
         ttsPlayPlaceholderDirective({
           TypedCallbackRequest: continueSessionStage1SemanticFrame
         })

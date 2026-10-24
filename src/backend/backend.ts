@@ -1,4 +1,5 @@
 import { Span } from '@sentry/node'
+import { MusicTrack } from '@v3rt3p/types/music'
 import { ProcessorDirectiveFunctions, ProcessorPartialResponseWebSocketMessage, ProcessorProcessWebSocketMessage } from '@v3rt3p/types/processor'
 import { EventEmitter } from 'node:stream'
 
@@ -56,6 +57,16 @@ export abstract class AudioMetadataBackendSession {
   abstract finish (): Promise<object>
 
   abstract processChunk (chunk: Buffer): Promise<void>
+}
+
+export abstract class MusicBackend {
+  abstract advanceQueueBackward (deviceId: string): Promise<void>
+
+  abstract advanceQueueForward (deviceId: string): Promise<void>
+
+  abstract getCurrentTrack (deviceId: string): Promise<MusicTrack | null>
+
+  abstract getNextTrack (deviceId: string): Promise<MusicTrack | null>
 }
 
 export abstract class STTBackendSession {

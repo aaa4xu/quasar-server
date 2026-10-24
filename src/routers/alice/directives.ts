@@ -1,4 +1,6 @@
+import { MusicTrack } from '@v3rt3p/types/music'
 import { ProcessorDirectiveFunctions } from '@v3rt3p/types/processor'
+import { randomUUID } from 'node:crypto'
 import z from 'zod'
 
 import { getLogger } from '../../logger'
@@ -10,14 +12,30 @@ export interface DirectiveCallData {
   name: string
 }
 
-export type DirectiveFunctionHandler<T> = (argument: T) => TDirective
+export type DirectiveFunctionHandler<T> = (argument: T) => WrappedDirective
 
 export interface DirectiveFunctionProvider {
-  convertToDirective(call: DirectiveCallData): null | TDirective
+  convertToWrappedDirective(call: DirectiveCallData): null | WrappedDirective
   getSupportedFunctions(): ProcessorDirectiveFunctions
 }
 
-export type TDirective = proto.NAlice.NAliceApi.ITDirective
+export type InternalDirective = MusicDirective<'next_track'> | MusicDirective<'play'> | MusicDirective<'previous_track'> |
+  MusicDirective<'recover_next_track'> | MusicDirective<'stop'> | MusicRecoverCommitDirective
+
+export interface MusicDirective<T extends string> {
+  type: `music_${T}`
+}
+
+export interface MusicRecoverCommitDirective extends MusicDirective<'recover_commit'> {
+  recoverCommitToken: string
+}
+
+export type RawDirective = proto.NAlice.NAliceApi.ITDirective
+
+export interface WrappedDirective {
+  internalDirective?: InternalDirective
+  quasarDirective?: RawDirective
+}
 
 export class AbstractDirectiveFunctionProvider implements DirectiveFunctionProvider {
   private readonly functionHandlerMap: Map<string, {
@@ -28,7 +46,8 @@ export class AbstractDirectiveFunctionProvider implements DirectiveFunctionProvi
 
   private readonly logger = getLogger<AbstractDirectiveFunctionProvider>()
 
-  convertToDirective (call: DirectiveCallData): null | TDirective {
+  convertToWrappedDirective (call: DirectiveCallData): null | WrappedDirective {
+    this.logger.info(`Converting directive '${call.name}' from '${JSON.stringify(call.arguments)}'`)
     const name = call.name.replace(/^smart_speaker_/, '')
 
     const handler = this.functionHandlerMap.get(name)
@@ -54,7 +73,7 @@ export class AbstractDirectiveFunctionProvider implements DirectiveFunctionProvi
       }]))
   }
 
-  protected addFunction<T> (name: string, description: string,
+  protected addFunction<T>(name: string, description: string,
     schema: z.ZodType<T>, handler: DirectiveFunctionHandler<T>): void {
     if (this.functionHandlerMap.has(name)) {
       throw new Error(`directive function handler with name '${name}' already registered`)
@@ -68,28 +87,76 @@ export class AbstractDirectiveFunctionProvider implements DirectiveFunctionProvi
 }
 
 export const pushUpdateConfigDirective = {
-  Name: 'push_update_config',
-  Type: 'client_action'
+  quasarDirective: {
+    Name: 'push_update_config',
+    Type: 'client_action'
+  }
 }
 
 export const ttsPlayPlaceholderDirective = (onFinish?: proto.NAlice.NAliceApi.TDirective.ITOnFinishEvent) => ({
-  AnalyticsType: 'tts_play_placeholder',
-  IsLedSilent: true,
-  Name: 'tts_play_placeholder',
-  Payload: encodeProtobufStruct({
-    channel: 'Dialog'
-  }),
-  Type: 'client_action',
-  ...(onFinish
-    ? {
-        OnFinish: onFinish
-      }
-    : {})
+  quasarDirective: {
+    AnalyticsType: 'tts_play_placeholder',
+    IsLedSilent: true,
+    Name: 'tts_play_placeholder',
+    Payload: encodeProtobufStruct({
+      channel: 'Dialog'
+    }),
+    Type: 'client_action',
+    ...(onFinish
+      ? {
+          OnFinish: onFinish
+        }
+      : {})
+  }
 })
 
 export const mmSemanticFrame = (payload?: proto.google.protobuf.IStruct, payloadRaw?: Buffer) => ({
-  Name: '@@mm_semantic_frame',
-  Payload: payload,
-  PayloadRaw: payloadRaw,
-  Type: 'server_action'
+  quasarDirective: {
+    Name: '@@mm_semantic_frame',
+    Payload: payload,
+    PayloadRaw: payloadRaw,
+    Type: 'server_action'
+  }
 })
+
+export const audioPlayDirective = (track: MusicTrack, offsetMs?: number, recoverCommitToken?: string) => ({
+  quasarDirective: {
+    Name: 'audio_play',
+    Payload: encodeProtobufStruct({
+      background_mode: 'Ducking',
+      callbacks: recoverCommitToken
+        ? {
+            on_started: {
+              payload: {
+                music: {
+                  recoverCommitToken,
+                  type: 'recoverCommit'
+                }
+              }
+            }
+          }
+        : {},
+      screen_type: 'Music',
+      stream: {
+        format: track.format,
+        ...(offsetMs ? { offset_ms: offsetMs } : {}),
+        id: randomUUID(),
+        type: 'Track',
+        url: track.url
+      },
+    }),
+    Type: 'client_action'
+  }
+})
+
+export const stackRecoverNextTrackDirective = {
+  quasarDirective: {
+    Name: '@@mm_stack_engine_get_next',
+    Payload: encodeProtobufStruct({
+      music: {
+        type: 'fetchNextTrack'
+      }
+    }),
+    Type: 'server_action'
+  }
+}

@@ -39,7 +39,7 @@ export function registerUniproxyAliceYandexNetRouter (parameters: UniProxyConnec
       throw new Error('wut?')
     }
 
-    const connection = new UniProxyConnection(websocket, parameters)
+    const connection = new UniProxyConnection(websocket, deviceId, parameters)
     websocket.on('close', () => {
       set.delete(connection)
       logger.warn('UniProxy WebSocket closed')
