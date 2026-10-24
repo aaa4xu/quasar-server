@@ -36,21 +36,21 @@ const playIotSoundDirective = (isPowerOn: boolean) => ({
   Type: 'client_action'
 })
 
-// export const soundLouderDirective = {
-//   AnalyticsType: 'sound_louder',
-//   IsLedSilent: true,
-//   Name: 'sound_louder',
-//   Payload: {},
-//   Type: 'client_action'
-// }
+const soundLouderDirective = {
+  AnalyticsType: 'sound_louder',
+  IsLedSilent: true,
+  Name: 'sound_louder',
+  Payload: {},
+  Type: 'client_action'
+}
 
-// export const soundQuieterDirective = {
-//   AnalyticsType: 'sound_quiter',
-//   IsLedSilent: true,
-//   Name: 'sound_quiter',
-//   Payload: {},
-//   Type: 'client_action'
-// }
+const soundQuieterDirective = {
+  AnalyticsType: 'sound_quiter',
+  IsLedSilent: true,
+  Name: 'sound_quiter',
+  Payload: {},
+  Type: 'client_action'
+}
 
 export class BaseDirectiveFunctionProvider extends AbstractDirectiveFunctionProvider {
   constructor () {
@@ -58,6 +58,10 @@ export class BaseDirectiveFunctionProvider extends AbstractDirectiveFunctionProv
 
     this.addFunction('bluetooth', 'Enable or disable Bluetooth on smart speaker', z.boolean(),
       (enable) => enable ? bluetoothEnableDirective : bluetoothDisableDirective)
+    this.addFunction('set_sound_volume_louder', 'Atomically make smart speaker volume louder', z.null(),
+      () => soundLouderDirective)
+    this.addFunction('set_sound_volume_quieter', 'Atomically make smart speaker volume quieter', z.null(),
+      () => soundQuieterDirective)
     this.addFunction('set_sound_volume', 'Set volume on smart speaker', z.number().int().min(0).max(10),
       (level) => soundSetLevelDirective(level))
     this.addFunction('play_iot_sound', 'Play IoT power on/power off sound on smart speaker', z.boolean()
