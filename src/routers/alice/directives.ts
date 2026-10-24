@@ -29,9 +29,11 @@ export class AbstractDirectiveFunctionProvider implements DirectiveFunctionProvi
   private readonly logger = getLogger<AbstractDirectiveFunctionProvider>()
 
   convertToDirective (call: DirectiveCallData): null | TDirective {
-    const handler = this.functionHandlerMap.get(call.name)
+    const name = call.name.replace(/^smart_speaker_/, '')
+
+    const handler = this.functionHandlerMap.get(name)
     if (!handler) {
-      this.logger.warn(`directive function '${call.name}' not found`)
+      this.logger.warn(`directive function '${name}' not found`)
       return null
     }
 
