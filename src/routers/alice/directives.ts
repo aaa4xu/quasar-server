@@ -4,7 +4,6 @@ import z from 'zod'
 import { getLogger } from '../../logger'
 import { encodeProtobufStruct } from '../../protobuf'
 import proto from '../../protos/protos'
-import { BaseDirectiveFunctionProvider } from './base-provider'
 
 export interface DirectiveCallData {
   arguments: unknown,
@@ -92,7 +91,3 @@ export const mmSemanticFrame = (payload?: proto.google.protobuf.IStruct, payload
   PayloadRaw: payloadRaw,
   Type: 'server_action'
 })
-
-export function getDirectiveFunctionProvider (platform: string) {
-  return new BaseDirectiveFunctionProvider()
-}

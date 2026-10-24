@@ -68,3 +68,7 @@ export class BaseDirectiveFunctionProvider extends AbstractDirectiveFunctionProv
       .describe('true if "on" sound, false if "off" sound'), (isPowerOn) => playIotSoundDirective(isPowerOn))
   }
 }
+
+export function getDirectiveFunctionProvider (_platform: string) {
+  return new BaseDirectiveFunctionProvider()
+}
