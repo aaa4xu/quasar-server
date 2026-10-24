@@ -56,16 +56,21 @@ export class BaseDirectiveFunctionProvider extends AbstractDirectiveFunctionProv
   constructor () {
     super()
 
-    this.addFunction('bluetooth', 'Enable or disable Bluetooth on smart speaker', z.boolean(),
-      (enable) => enable ? bluetoothEnableDirective : bluetoothDisableDirective)
-    this.addFunction('set_sound_volume_louder', 'Atomically make smart speaker volume louder', z.null(),
+    this.addFunction('bluetooth', 'Enable or disable Bluetooth on smart speaker', z.object({
+      enable: z.boolean()
+    }),
+    (data) => data.enable ? bluetoothEnableDirective : bluetoothDisableDirective)
+    this.addFunction('set_sound_volume_louder', 'Atomically make smart speaker volume louder', z.object({}),
       () => soundLouderDirective)
-    this.addFunction('set_sound_volume_quieter', 'Atomically make smart speaker volume quieter', z.null(),
+    this.addFunction('set_sound_volume_quieter', 'Atomically make smart speaker volume quieter', z.object({}),
       () => soundQuieterDirective)
-    this.addFunction('set_sound_volume', 'Set volume on smart speaker', z.number().int().min(0).max(10),
-      (level) => soundSetLevelDirective(level))
-    this.addFunction('play_iot_sound', 'Play IoT power on/power off sound on smart speaker', z.boolean()
-      .describe('true if "on" sound, false if "off" sound'), (isPowerOn) => playIotSoundDirective(isPowerOn))
+    this.addFunction('set_sound_volume', 'Set volume on smart speaker', z.object({
+      volume: z.number().int().min(1).max(10)
+    }), (data) => soundSetLevelDirective(data.volume))
+    this.addFunction('play_iot_sound', 'Play IoT power on/power off sound on smart speaker', z.object({
+      isPowerOn: z.boolean()
+    })
+      .describe('true if "on" sound, false if "off" sound'), (data) => playIotSoundDirective(data.isPowerOn))
   }
 }
 
