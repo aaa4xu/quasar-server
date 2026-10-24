@@ -3,7 +3,7 @@ import { Span, startInactiveSpan } from '@sentry/node'
 import { ProcessorBackend, ProcessorPartialResponse, ProcessorSession } from '../../backend/backend'
 import { getLogger } from '../../logger'
 import { Notifier } from '../../notifier'
-import { QuasarDirective } from '../alice/directives'
+import { DirectiveFunctionProvider, mmSemanticFrame, TDirective, ttsPlayPlaceholderDirective } from '../alice/directives'
 import { continueSessionStage1SemanticFrame } from '../alice/typed-payloads'
 
 export interface Input {
@@ -11,12 +11,13 @@ export interface Input {
 }
 
 export interface InputHandlerProperties {
+  directiveFunctionProvider: DirectiveFunctionProvider
   processor: ProcessorBackend
 }
 
 export interface InputResult {
   dialogFinished: boolean
-  directives: QuasarDirective[]
+  directives: TDirective[]
   shouldListen: boolean
   text: null | string
 }
@@ -114,7 +115,7 @@ export class InputHandler {
         this.notifier.notifyAll()
       })
       this.session.addListener('partialResponse', () => {})
-      await this.session.prepare()
+      await this.session.prepare(this.properties.directiveFunctionProvider.getSupportedFunctions())
       this.logger.debug('Session opened')
     }
   }
@@ -153,12 +154,7 @@ export class InputHandler {
         return {
           dialogFinished: true,
           directives: [
-            {
-              data: {
-                type: 'ttsPlayPlaceholder'
-              },
-              type: 'internalQuasar'
-            }
+            ttsPlayPlaceholderDirective()
           ],
           shouldListen: false,
           text: input.data.text
@@ -219,13 +215,7 @@ export class InputHandler {
       return {
         dialogFinished: false,
         directives: [
-          {
-            data: {
-              payload: continueSessionStage1SemanticFrame,
-              type: 'mmSemanticFrame'
-            },
-            type: 'internalQuasar'
-          }
+          mmSemanticFrame(continueSessionStage1SemanticFrame)
         ],
         shouldListen: false,
         text: null
@@ -246,13 +236,9 @@ export class InputHandler {
       return {
         dialogFinished: !partialResponse.shouldListen,
         directives: [
-          ...partialResponse.directives,
-          {
-            data: {
-              type: 'ttsPlayPlaceholder'
-            },
-            type: 'internalQuasar'
-          }
+          ...(partialResponse.directives.map(directive =>
+            this.properties.directiveFunctionProvider.convertToDirective(directive)).filter(Boolean) as TDirective[]),
+          ttsPlayPlaceholderDirective()
         ],
         shouldListen: partialResponse.shouldListen,
         text: partialResponse.text
@@ -267,16 +253,12 @@ export class InputHandler {
     return {
       dialogFinished: false,
       directives: [
-        ...partialResponse.directives,
-        {
-          data: {
-            onFinish: {
-              TypedCallbackRequest: continueSessionStage1SemanticFrame
-            },
-            type: 'ttsPlayPlaceholder'
-          },
-          type: 'internalQuasar'
-        }
+        ...(partialResponse.directives.map(directive =>
+          this.properties.directiveFunctionProvider.convertToDirective(directive))
+          .filter(Boolean) as TDirective[]),
+        ttsPlayPlaceholderDirective({
+          TypedCallbackRequest: continueSessionStage1SemanticFrame
+        })
       ],
       shouldListen: false,
       text: partialResponse.text

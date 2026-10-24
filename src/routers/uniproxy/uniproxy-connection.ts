@@ -7,7 +7,7 @@ import { AudioMetadataBackend, ProcessorBackend, STTBackend, TTSBackend } from '
 import { getLogger } from '../../logger'
 import { decodeProtobufStruct, getValue } from '../../protobuf'
 import proto from '../../protos/protos'
-import { convertToAliceResponseDirective as convertToAliceDirective, QuasarDirective } from '../alice/directives'
+import { getDirectiveFunctionProvider, mmSemanticFrame, TDirective } from '../alice/directives'
 import { continueSessionStage2SemanticFrame, externalEventSemanticFrame, ttsSemanticFrame } from '../alice/typed-payloads'
 import { InputHandler, InputResult, TextInput } from './input-handler'
 import { VoiceInputHandler } from './voice-input-handler'
@@ -59,41 +59,32 @@ export class UniProxyConnection {
 
   constructor (private readonly webSocket: WebSocket, private readonly parameters: UniProxyConnectionParameters) {
     this.voiceInputHandler = new VoiceInputHandler(parameters)
-    this.inputHandler = new InputHandler(parameters)
+    this.inputHandler = new InputHandler({
+      ...parameters,
+      directiveFunctionProvider: getDirectiveFunctionProvider('TODO')
+    })
 
     this.setupWebSocketHandlers()
     this.setupVoiceInputHandlers()
   }
 
-  async pushDirective (...directives: QuasarDirective[]): Promise<void> {
+  async pushDirective (...directives: TDirective[]): Promise<void> {
     await this.sendPush(directives)
   }
 
   async pushEvent (text: string): Promise<void> {
     await this.sendPush([
-      {
-        data: {
-          payload: externalEventSemanticFrame(text),
-          type: 'mmSemanticFrame'
-        },
-        type: 'internalQuasar'
-      }
+      mmSemanticFrame(externalEventSemanticFrame(text))
     ])
   }
 
   async pushRawDirective (directive: proto.NAlice.NAliceApi.ITDirective): Promise<void> {
-    await this.sendPush([], [directive])
+    await this.sendPush([directive])
   }
 
   async pushTts (text: string): Promise<void> {
     await this.sendPush([
-      {
-        data: {
-          payload: ttsSemanticFrame(text),
-          type: 'mmSemanticFrame'
-        },
-        type: 'internalQuasar'
-      }
+      mmSemanticFrame(ttsSemanticFrame(text))
     ])
   }
 
@@ -303,13 +294,9 @@ export class UniProxyConnection {
           metadata: {}
         }
       } else if (getValue(payload, 'any', 'typed_semantic_frame', 'continue_session_stage1_semantic_frame')) {
-        await this.sendPush([{
-          data: {
-            payload: continueSessionStage2SemanticFrame(this.dialogId),
-            type: 'mmSemanticFrame',
-          },
-          type: 'internalQuasar'
-        }], [])
+        await this.sendPush([
+          mmSemanticFrame(continueSessionStage2SemanticFrame(this.dialogId))
+        ])
       } else if (getValue(payload, 'any', 'typed_semantic_frame', 'continue_session_stage2_semantic_frame')) {
         dialogId = getValue(payload, 'string', 'typed_semantic_frame', 'continue_session_stage2_semantic_frame', 'dialog_id')
         textInput = {
@@ -439,7 +426,7 @@ export class UniProxyConnection {
     })
   }
 
-  private async sendAliceResponse (text: null | string, directives: QuasarDirective[],
+  private async sendAliceResponse (text: null | string, directives: TDirective[],
     shouldListen: boolean, requestId: string,
     referenceMessageId: string, sequenceNumber: number) {
     await this.sendServerMessage({
@@ -465,10 +452,7 @@ export class UniProxyConnection {
               }
             },
             Cards: [],
-            Directives: [
-              ...directives.map(directive =>
-                convertToAliceDirective(directive)),
-            ],
+            Directives: directives,
             IsStreaming: false,
             Suggest: {
               Items: []
@@ -584,8 +568,7 @@ export class UniProxyConnection {
     }
   }
 
-  private async sendPush (directives: QuasarDirective[],
-    rawDirectives?: proto.NAlice.NAliceApi.ITDirective[]): Promise<void> {
+  private async sendPush (directives: TDirective[]): Promise<void> {
     await this.sendServerMessage({
       Event: {
         Header: {
@@ -595,10 +578,7 @@ export class UniProxyConnection {
         Push: {
           AnalyticsMetaInfo: {},
           DeduplicationPushId: randomUUID(),
-          Directives: [
-            ...directives.map(directive => convertToAliceDirective(directive)),
-            ...(rawDirectives ?? [])
-          ],
+          Directives: directives,
           PushIds: [
             randomUUID()
           ]

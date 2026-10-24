@@ -1,5 +1,5 @@
 import { Span } from '@sentry/node'
-import { ProcessorPartialResponseWebSocketMessage, ProcessorProcessWebSocketMessage } from '@v3rt3p/types/processor'
+import { ProcessorDirectiveFunctions, ProcessorPartialResponseWebSocketMessage, ProcessorProcessWebSocketMessage } from '@v3rt3p/types/processor'
 import { EventEmitter } from 'node:stream'
 
 export interface AudioMetadataBackend {
@@ -16,7 +16,7 @@ export type ProcessorRequest = ProcessorProcessWebSocketMessage['data']
 
 export interface ProcessorSession extends EventEmitter<ProcessorSessionEvents> {
   close(): void;
-  prepare(): Promise<void>;
+  prepare(directiveFunctions: ProcessorDirectiveFunctions): Promise<void>;
   process(request: ProcessorRequest): Promise<void>;
 }
 

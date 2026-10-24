@@ -14,6 +14,7 @@ import { OpenAITTSBackend } from './backend/tts/openai'
 import { getEnvironment } from './environment'
 import { getLogger } from './logger'
 import proto from './protos/protos'
+import { pushUpdateConfigDirective } from './routers/alice/directives'
 import { registerClckYandexNetRouter } from './routers/clck.yandex.net'
 import { registerMobileproxyPassportYandexNetRouter } from './routers/mobileproxy.passport.yandex.net'
 import { registerOAuthYandexRuRouter } from './routers/oauth.yandex.ru'
@@ -218,12 +219,7 @@ apiServer.patch('/devices/:duid', async ({ body, params: { duid } }) => {
   const info = await storage.updateNameAndQuasarConfig(duid, body.name, body.quasarConfig)
 
   runForConnections(duid, connection => {
-    connection.pushDirective({
-      data: {
-        type: 'pushUpdateConfig'
-      },
-      type: 'internalQuasar'
-    }).catch(error =>
+    connection.pushDirective(pushUpdateConfigDirective).catch(error =>
       logger.warn(`Failed to push config update directive to UniProxy connection: ${error}`))
   })
 

@@ -1,5 +1,8 @@
 import { getTraceData, Span, startInactiveSpan } from '@sentry/node'
-import { PROCESSOR_METADATA_SERVER_TYPE_KEY, ProcessorClientWebSocketMessage, ProcessorMetadataServerType, processorServerWebSocketMessage } from '@v3rt3p/types/processor'
+import {
+  PROCESSOR_METADATA_SERVER_TYPE_KEY, ProcessorClientWebSocketMessage,
+  ProcessorDirectiveFunctions, ProcessorMetadataServerType, processorServerWebSocketMessage
+} from '@v3rt3p/types/processor'
 import { EventEmitter } from 'node:stream'
 import { Event, WebSocket } from 'ws'
 
@@ -75,9 +78,11 @@ export class BasicProcessorSession extends EventEmitter<ProcessorSessionEvents> 
     this.webSocket.close()
   }
 
-  prepare (): Promise<void> {
+  prepare (directiveFunctions: ProcessorDirectiveFunctions): Promise<void> {
     return this.send({
-      data: {},
+      data: {
+        directiveFunctions
+      },
       type: 'prepare'
     })
   }

@@ -1,80 +1,70 @@
-import { Directive } from '@v3rt3p/types/directives'
+import { ProcessorDirectiveFunctions } from '@v3rt3p/types/processor'
+import z from 'zod'
 
+import { getLogger } from '../../logger'
 import { encodeProtobufStruct } from '../../protobuf'
 import proto from '../../protos/protos'
+import { BaseDirectiveFunctionProvider } from './base-provider'
 
-type TDirective = proto.NAlice.NAliceApi.ITDirective
-
-const TProcessIncomingCallDirectiveClass = proto.NAlice.TPhoneCallsCapability.TProcessIncomingCallDirective
-
-export type InternalQuasarDirective = {
-  data: MMSemanticFrameData | ProcessIncomingCallData | PushUpdateConfigData | TtsPlayPlaceholderData
-  type: 'internalQuasar',
+export interface DirectiveCallData {
+  arguments: unknown,
+  name: string
 }
 
-export interface ProcessIncomingCallData {
-  callId: string;
-  type: 'processIncomingCall'
+export type DirectiveFunctionHandler<T> = (argument: T) => TDirective
+
+export interface DirectiveFunctionProvider {
+  convertToDirective(call: DirectiveCallData): null | TDirective
+  getSupportedFunctions(): ProcessorDirectiveFunctions
 }
 
-export interface PushUpdateConfigData {
-  type: 'pushUpdateConfig'
+export type TDirective = proto.NAlice.NAliceApi.ITDirective
+
+export class AbstractDirectiveFunctionProvider implements DirectiveFunctionProvider {
+  private readonly functionHandlerMap: Map<string, {
+    description: string
+    handler: DirectiveFunctionHandler<unknown>
+    schema: z.ZodType<unknown>
+  }> = new Map()
+
+  private readonly logger = getLogger<AbstractDirectiveFunctionProvider>()
+
+  convertToDirective (call: DirectiveCallData): null | TDirective {
+    const handler = this.functionHandlerMap.get(call.name)
+    if (!handler) {
+      this.logger.warn(`directive function '${call.name}' not found`)
+      return null
+    }
+
+    try {
+      return handler.handler(handler.schema.parse(call.arguments))
+    } catch (error) {
+      this.logger.warn('failed to convert to directive', error)
+    }
+
+    return null
+  }
+
+  getSupportedFunctions (): ProcessorDirectiveFunctions {
+    return Object.fromEntries([...this.functionHandlerMap.entries()].map(
+      (item) => [`smart_speaker_${item[0]}`, {
+        arguments: item[1].schema.toJSONSchema(),
+        description: item[1].description
+      }]))
+  }
+
+  protected addFunction<T> (name: string, description: string,
+    schema: z.ZodType<T>, handler: DirectiveFunctionHandler<T>): void {
+    if (this.functionHandlerMap.has(name)) {
+      throw new Error(`directive function handler with name '${name}' already registered`)
+    }
+    this.functionHandlerMap.set(name, {
+      description,
+      handler: handler as DirectiveFunctionHandler<unknown>,
+      schema
+    })
+  }
 }
-
-export type QuasarDirective = Directive | InternalQuasarDirective
-
-export interface TtsPlayPlaceholderData {
-  onFinish?: proto.NAlice.NAliceApi.TDirective.ITOnFinishEvent
-  type: 'ttsPlayPlaceholder'
-}
-
-export const soundLouderDirective = {
-  AnalyticsType: 'sound_louder',
-  IsLedSilent: true,
-  Name: 'sound_louder',
-  Payload: {},
-  Type: 'client_action'
-}
-
-export const soundQuieterDirective = {
-  AnalyticsType: 'sound_quiter',
-  IsLedSilent: true,
-  Name: 'sound_quiter',
-  Payload: {},
-  Type: 'client_action'
-}
-
-export const bluetoothEnableDirective = {
-  Name: 'start_bluetooth',
-  Payload: {},
-  Type: 'client_action'
-}
-
-export const bluetoothDisableDirective = {
-  Name: 'stop_bluetooth',
-  Payload: {},
-  Type: 'client_action'
-}
-
-export const soundSetLevelDirective = (level: number) => ({
-  AnalyticsType: 'sound_set_level',
-  IsLedSilent: true,
-  Name: 'sound_set_level',
-  Payload: encodeProtobufStruct({
-    new_level: level,
-    new_percent_level: level * 10
-  }),
-  Type: 'client_action'
-})
-
-export const processIncomingCallDirective = (callId: string) => ({
-  IsLedSilent: true,
-  Name: 'phone_calls_process_incoming_call',
-  PayloadRaw: TProcessIncomingCallDirectiveClass.encode({
-    CallId: callId
-  }).finish(),
-  Type: 'client_action'
-})
 
 export const pushUpdateConfigDirective = {
   Name: 'push_update_config',
@@ -96,12 +86,6 @@ export const ttsPlayPlaceholderDirective = (onFinish?: proto.NAlice.NAliceApi.TD
     : {})
 })
 
-export interface MMSemanticFrameData {
-  payload?: proto.google.protobuf.IStruct,
-  payloadRaw?: Buffer
-  type: 'mmSemanticFrame',
-}
-
 export const mmSemanticFrame = (payload?: proto.google.protobuf.IStruct, payloadRaw?: Buffer) => ({
   Name: '@@mm_semantic_frame',
   Payload: payload,
@@ -109,46 +93,6 @@ export const mmSemanticFrame = (payload?: proto.google.protobuf.IStruct, payload
   Type: 'server_action'
 })
 
-export function convertToAliceResponseDirective (directive: QuasarDirective): TDirective {
-  switch (directive.type) {
-    case 'bluetoothDisable': {
-      return bluetoothDisableDirective
-    }
-    case 'bluetoothEnable': {
-      return bluetoothEnableDirective
-    }
-    case 'customQuasar': {
-      return directive.data as TDirective
-    }
-    case 'internalQuasar': {
-      switch (directive.data.type) {
-        case 'mmSemanticFrame': {
-          return mmSemanticFrame(directive.data.payload, directive.data.payloadRaw)
-        }
-        case 'processIncomingCall': {
-          return processIncomingCallDirective(directive.data.callId)
-        }
-        case 'pushUpdateConfig': {
-          return pushUpdateConfigDirective
-        }
-        case 'ttsPlayPlaceholder': {
-          return ttsPlayPlaceholderDirective(directive.data.onFinish)
-        }
-      }
-      // @ts-expect-error Wut? ALALALALA
-      break
-    }
-    case 'soundLouder': {
-      return soundLouderDirective
-    }
-    case 'soundQuieter': {
-      return soundQuieterDirective
-    }
-    case 'soundSetLevel': {
-      return soundSetLevelDirective(directive.level)
-    }
-    case 'customMarusya': {
-      throw new Error('custom Marusya directives are not supported on this platform')
-    }
-  }
+export function getDirectiveFunctionProvider (platform: string) {
+  return new BaseDirectiveFunctionProvider()
 }
