@@ -21,11 +21,3 @@ export const continueSessionStage2SemanticFrame = (dialogId: null | string) => e
     }
   }
 })
-
-export const fetchStateSemanticFrane = (id: string) => encodeProtobufStruct({
-  typed_semantic_frame: {
-    fetch_state_semantic_frame: {
-      id
-    }
-  }
-})

@@ -10,7 +10,7 @@ import { decodeProtobufStruct, getValue } from '../../protobuf'
 import proto from '../../protos/protos'
 import { getDirectiveFunctionProvider } from '../alice/base-provider'
 import { audioPlayDirective, DirectiveFunctionProvider, mmSemanticFrame, RawDirective, stackRecoverNextTrackDirective, WrappedDirective } from '../alice/directives'
-import { continueSessionStage2SemanticFrame, fetchStateSemanticFrane, ttsSemanticFrame } from '../alice/typed-payloads'
+import { continueSessionStage2SemanticFrame, ttsSemanticFrame } from '../alice/typed-payloads'
 import { AlarmMetadata, InputHandler, InputMetadata, InputResult, TextInput, TimerMetadata } from './input-handler'
 import { VoiceInputHandler } from './voice-input-handler'
 
@@ -89,7 +89,26 @@ export class UniProxyConnection {
     const promise = Promise.withResolvers<InputMetadata>()
 
     this.fetchStateRequestsResolvers.set(requestId, state => promise.resolve(state))
-    await this.pushDirectives(mmSemanticFrame(true, fetchStateSemanticFrane(requestId)))
+
+    await this.sendServerMessage({
+      Event: {
+        Header: {
+          Ack: Date.now(),
+          MessageId: requestId,
+        },
+        SyncPush: {
+          DeduplicationPushId: requestId,
+          PushId: requestId,
+          SyncRequest: {
+            GetDeviceState: {
+              GetDeviceStateOptions: {},
+              GetEnvironmentStateOptions: {}
+            }
+          }
+        }
+      }
+    })
+
     setTimeout(() => {
       this.fetchStateRequestsResolvers.delete(requestId)
       promise.reject(new Error('timeout'))
@@ -256,6 +275,9 @@ export class UniProxyConnection {
       if (clientMessage.Event.MatchedUser) {
         await this.handleMatchedUserEvent(clientMessage)
       }
+      if (clientMessage.Event.SyncPushResponse) {
+        await this.handleSyncPushResponseEvent(clientMessage)
+      }
     }
   }
 
@@ -362,6 +384,22 @@ export class UniProxyConnection {
     }
   }
 
+  private async handleSyncPushResponseEvent (clientMessage: TClientMessage): Promise<void> {
+    const syncPushResponse = clientMessage.Event!.SyncPushResponse!.SyncResponse!
+    const requestId = clientMessage.Event!.Header!.RefMessageId!
+
+    const metadata = this.parseQuasarMetadata(syncPushResponse.GetDeviceStateResponse!.DeviceState!,
+      syncPushResponse.GetDeviceStateResponse!.EnvironmentState!)
+
+    const resolver = this.fetchStateRequestsResolvers.get(requestId)
+
+    if (resolver) {
+      resolver(metadata)
+    }
+
+    this.fetchStateRequestsResolvers.delete(requestId)
+  }
+
   private async handleTextInputEvent (clientMessage: TClientMessage): Promise<void> {
     let textInput: null | TextInput = null
 
@@ -395,19 +433,6 @@ export class UniProxyConnection {
         }
       } else if (getValue(payload, 'any', 'typed_semantic_frame', 'continue_session_stage1_semantic_frame')) {
         await this.pushDirectives(mmSemanticFrame(false, continueSessionStage2SemanticFrame(this.dialogId)))
-      } else if (getValue(payload, 'any', 'typed_semantic_frame', 'fetch_state_semantic_frame')) {
-        const requestId = getValue(payload, 'string', 'typed_semantic_frame', 'fetch_state_semantic_frame', 'id')!
-        const resolver = this.fetchStateRequestsResolvers.get(requestId)
-        this.fetchStateRequestsResolvers.delete(requestId)
-        if (resolver) {
-          resolver(metadata)
-        }
-        textInput = {
-          data: {
-            kind: 'dummy'
-          },
-          metadata
-        }
       } else if (getValue(payload, 'any', 'typed_semantic_frame', 'continue_session_stage2_semantic_frame')) {
         dialogId = getValue(payload, 'string', 'typed_semantic_frame', 'continue_session_stage2_semantic_frame', 'dialog_id')
         textInput = {

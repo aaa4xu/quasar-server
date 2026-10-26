@@ -1,7 +1,7 @@
 import { getTraceData, Span, startInactiveSpan } from '@sentry/node'
 import {
-  PROCESSOR_METADATA_SERVER_TYPE_KEY, ProcessorClientWebSocketMessage,
-  ProcessorDirectiveFunctions, ProcessorMetadataServerType, processorServerWebSocketMessage
+  ProcessorClientWebSocketMessage,
+  ProcessorDirectiveFunctions, processorServerWebSocketMessage
 } from '@v3rt3p/types/processor'
 import { EventEmitter } from 'node:stream'
 import { Event, WebSocket } from 'ws'
@@ -99,8 +99,7 @@ export class BasicProcessorSession extends EventEmitter<ProcessorSessionEvents> 
       data: {
         ...request,
         metadata: {
-          ...request.metadata,
-          [PROCESSOR_METADATA_SERVER_TYPE_KEY]: ProcessorMetadataServerType.QUASAR
+          ...request.metadata
         }
       },
       type: 'process'
