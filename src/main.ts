@@ -269,9 +269,13 @@ app.use((request, response) => {
   response.status(500).end()
 })
 
+process.removeAllListeners('SIGINT')
+
 process.on('SIGINT', () => {
   logger.info('Stopping...')
-  apiServer.stop()
   server.close()
+  if (apiServer.server) {
+    apiServer.stop()
+  }
   logger.info('Stopped')
 })

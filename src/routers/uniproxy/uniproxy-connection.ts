@@ -122,7 +122,7 @@ export class UniProxyConnection {
             break
           }
           case 'music_stop': {
-            const position = metadata?.deviceState?.AudioPlayer?.OffsetMs
+            const position = metadata?._raw?.deviceState?.AudioPlayer?.OffsetMs
             if (position) {
               this.parameters.musicManager.savePosition(this.deviceId, position)
             }
@@ -331,10 +331,12 @@ export class UniProxyConnection {
 
     const event = clientMessage.Event!.TextInput!.Request!.Event!
 
-    const metadata = {
-      deviceState: proto.NAlice.NAliceApi.TDeviceState.decode(
-        clientMessage.Event!.TextInput!.Request!.DeviceStateRaw!)
-    }
+    const metadata = this.parseQuasarMetadata(
+      proto.NAlice.NAliceApi.TDeviceState.decode(
+        clientMessage.Event!.TextInput!.Request!.DeviceStateRaw!),
+      proto.NAlice.NAliceApi.TEnvironmentState.decode(
+        clientMessage.Event!.TextInput!.Request!.EnvironmentStateRaw!)
+    )
 
     if (event.Type === proto.NAlice.EEventType.server_action && event.Payload) {
       const payload = decodeProtobufStruct(event.Payload)
@@ -493,10 +495,12 @@ export class UniProxyConnection {
     this.voiceInputReferenceRequestId = voiceInputHeader.RequestId!
     this.voiceInputReferenceSequenceNumber = voiceInputHeader.SequenceNumber!
     this.voiceInputHandler.handleVoiceInputEvent({
-      metadata: {
-        deviceState: proto.NAlice.NAliceApi.TDeviceState.decode(
-          clientMessage.Event!.VoiceInput!.Request!.DeviceStateRaw!)
-      },
+      metadata: this.parseQuasarMetadata(
+        proto.NAlice.NAliceApi.TDeviceState.decode(
+          clientMessage.Event!.VoiceInput!.Request!.DeviceStateRaw!),
+        proto.NAlice.NAliceApi.TEnvironmentState.decode(
+          clientMessage.Event!.VoiceInput!.Request!.EnvironmentStateRaw!)
+      ),
       parentSpan: this.inputSpan ?? this.dialogSpan
     })
   }
@@ -523,6 +527,80 @@ export class UniProxyConnection {
       this.logger.error('Failed to open InputHandler session: ', error)
       this.handleServerCancel()
     })
+  }
+
+  private parseQuasarMetadata (deviceState: proto.NAlice.NAliceApi.ITDeviceState,
+    environmentState: proto.NAlice.NAliceApi.ITEnvironmentState): InputMetadata {
+    const timers: {
+      currentlyPlaying: boolean
+      duration: number
+      id: string
+      remaining: number
+    }[] = []
+    const alarms: {
+      currentlyPlaying: boolean
+      days: (number | {
+        day?: number
+        month?: number
+        year?: number
+      })[],
+      id: string
+      time: {
+        hours?: number
+        minutes?: number
+        seconds?: number
+      },
+    }[] = []
+
+    const alarmCapability = findCapabilityInEnvironmentState(environmentState,
+      proto.NAlice.TCapability.ECapabilityType.AlarmCapabilityType, proto.NAlice.TAlarmCapability.decode)
+
+    if (alarmCapability) {
+      const rawAlarms = alarmCapability.State?.Alarms
+      if (rawAlarms) {
+        for (const alarm of rawAlarms) {
+          if (!alarm.Disabled) {
+            alarms.push({
+              currentlyPlaying: !!alarm.CurrentlyPlaying,
+              days: alarm.ActivationDays?.map(day => day.Weekday ?? {
+                day: day.Date?.Day ?? undefined,
+                month: day.Date?.Month ?? undefined,
+                year: day.Date?.Year ?? undefined,
+              }) ?? [],
+              id: alarm.AlarmId!,
+              time: {
+                hours: alarm.LocalTime?.Hours ?? undefined,
+                minutes: alarm.LocalTime?.Minutes ?? undefined,
+                seconds: alarm.LocalTime?.Seconds ?? undefined
+              }
+            })
+          }
+        }
+      }
+
+      const rawTimers = alarmCapability.State?.Timers
+      if (rawTimers) {
+        for (const timer of rawTimers) {
+          if (!timer.Disabled) {
+            timers.push({
+              currentlyPlaying: !!timer.CurrentlyPlaying,
+              duration: timer.Duration!,
+              id: timer.TimerId!,
+              remaining: timer.Remaining!
+            })
+          }
+        }
+      }
+    }
+
+    return {
+      _raw: {
+        deviceState,
+        environmentState
+      },
+      alarms: JSON.stringify(alarms),
+      timers: JSON.stringify(timers)
+    }
   }
 
   private async sendAliceResponse (text: null | string, directives: RawDirective[],
@@ -808,6 +886,17 @@ export class UniProxyConnection {
       })
     })
   }
+}
+
+function findCapabilityInEnvironmentState<T> (state: proto.NAlice.NAliceApi.ITEnvironmentState,
+  type: proto.NAlice.TCapability.ECapabilityType, decoder: (data: Uint8Array) => T): null | T {
+  const capability = state.Endpoints &&
+      state.Endpoints[0]?.AnyCapabilities?.find(capability =>
+        capability.CapabilityType === type)
+  if (!capability || !capability.RawCapability) {
+    return null
+  }
+  return decoder(capability.RawCapability)
 }
 
 function longEquals (a: Long | number, b: Long | number): boolean {

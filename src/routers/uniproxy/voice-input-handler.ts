@@ -111,6 +111,10 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
       })
     }
 
+    this.metadata = {
+      ...request.metadata
+    }
+
     let audioMetadataSession: AudioMetadataBackendSession
     let sttSession: STTBackendSession
 

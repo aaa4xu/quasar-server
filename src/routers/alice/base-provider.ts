@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto'
 import z from 'zod'
 
 import { encodeProtobufStruct } from '../../protobuf'
+import protos from '../../protos/protos'
 import { AbstractDirectiveFunctionProvider, WrappedDirective } from './directives'
 
 const bluetoothEnableDirective = {
@@ -103,6 +105,139 @@ const playerRewindDirective = (amountMs: number, type: 'Backward' | 'Forward') =
   }
 })
 
+const alarmAddProperties = z.object({
+  days: z.array(z.union([z.number().int().min(1).max(7).describe('Week day: 1 - Monday, 7 - Sunday'), z.object({
+    day: z.number().int().min(1).max(31),
+    month: z.number().int().min(1).max(12),
+    year: z.number().int().min(1)
+  })])).describe('Days or weekdays when alarm should run (each entry either specific weekday, or specific day)'),
+  time: z.object({
+    hours: z.number().int().min(0).max(23),
+    minutes: z.number().int().min(0).max(59),
+    seconds: z.number().int().min(0).max(59)
+  })
+})
+
+type AlarmAddProperties = z.infer<typeof alarmAddProperties>
+
+const alarmAddDirective = (properties: AlarmAddProperties): WrappedDirective => ({
+  quasarDirective: {
+    IsLedSilent: true,
+    Name: 'alarm_add_directive',
+    PayloadRaw: protos.NAlice.TAlarmCapability.TAlarmAddDirective.encode({
+      Alarm: {
+        ActivationDays: properties.days.map(day => typeof day === 'object'
+          ? {
+              Day: {
+                Day: day.day,
+                Month: day.month,
+                Year: day.year
+              }
+            }
+          : {
+              Weekday: day
+            }),
+        AlarmId: randomUUID(),
+        LocalTime: {
+          Hours: properties.time.hours,
+          Minutes: properties.time.minutes,
+          Seconds: properties.time.seconds
+        }
+      },
+      Name: 'alarm_add_directive'
+    }).finish(),
+    Type: 'client_action'
+  }
+})
+
+const alarmCancelDirective = (id: string): WrappedDirective => ({
+  quasarDirective: {
+    IsLedSilent: true,
+    Name: 'alarm_cancel_directive',
+    PayloadRaw: protos.NAlice.TAlarmCapability.TAlarmCancelDirective.encode({
+      AlarmId: id,
+      Name: 'alarm_cancel_directive'
+    }).finish(),
+    Type: 'client_action'
+  }
+})
+
+const alarmStopDirective = {
+  quasarDirective: {
+    IsLedSilent: true,
+    Name: 'alarm_stop_directive',
+    PayloadRaw: protos.NAlice.TAlarmCapability.TAlarmStopDirective.encode({
+      Name: 'alarm_stop_directive',
+      StopMedia: true
+    }).finish(),
+    Type: 'client_action'
+  }
+}
+
+const timerCancelDirective = (id: string): WrappedDirective => ({
+  quasarDirective: {
+    IsLedSilent: true,
+    Name: 'timer_cancel_directive',
+    PayloadRaw: protos.NAlice.TAlarmCapability.TTimerCancelDirective.encode({
+      Name: 'timer_cancel_directive',
+      TimerId: id
+    }).finish(),
+    Type: 'client_action'
+  }
+})
+
+const timerStopDirective = (id: string): WrappedDirective => ({
+  quasarDirective: {
+    IsLedSilent: true,
+    Name: 'timer_stop_directive',
+    PayloadRaw: protos.NAlice.TAlarmCapability.TTimerStopDirective.encode({
+      Name: 'timer_stop_directive',
+      TimerId: id
+    }).finish(),
+    Type: 'client_action'
+  }
+})
+
+const timerPauseDirective = (id: string): WrappedDirective => ({
+  quasarDirective: {
+    IsLedSilent: true,
+    Name: 'timer_pause_directive',
+    PayloadRaw: protos.NAlice.TAlarmCapability.TTimerPauseDirective.encode({
+      Name: 'timer_pause_directive',
+      TimerId: id
+    }).finish(),
+    Type: 'client_action'
+  }
+})
+
+const timerResumeDirective = (id: string): WrappedDirective => ({
+  quasarDirective: {
+    IsLedSilent: true,
+    Name: 'timer_resume_directive',
+    PayloadRaw: protos.NAlice.TAlarmCapability.TTimerResumeDirective.encode({
+      Name: 'timer_resume_directive',
+      TimerId: id
+    }).finish(),
+    Type: 'client_action'
+  }
+})
+
+const timerSetDirective = (seconds: number): WrappedDirective => ({
+  quasarDirective: {
+    Name: 'timer_set_directive',
+    PayloadRaw: protos.NAlice.TAlarmCapability.TTimerSetDirective.encode({
+      Name: 'timer_set_directive',
+      Timer: {
+        Duration: seconds,
+        Remaining: seconds,
+        StartTimestamp: Math.round(Date.now() / 1000),
+        TimerId: randomUUID()
+      }
+    }).finish(),
+    Type: 'client_action'
+  }
+})
+
 export const textToDirectiveMap: Record<string, WrappedDirective> = {
   громче: soundLouderDirective,
   пауза: playerStopDirective,
@@ -114,6 +249,16 @@ export const textToDirectiveMap: Record<string, WrappedDirective> = {
 export class BaseDirectiveFunctionProvider extends AbstractDirectiveFunctionProvider {
   constructor () {
     super()
+
+    this.addFunction('alarm_add', 'Adds alarm to speaker', alarmAddProperties, (properties) => alarmAddDirective(properties))
+    this.addFunction('alarm_cancel', 'Removes specific alarm from speaker', z.object({ id: z.string() }), (data) => alarmCancelDirective(data.id))
+    this.addFunction('alarm_stop', 'Stops running active alarm on speaker', z.unknown(), () => alarmStopDirective)
+
+    this.addFunction('timer_set', 'Adds timer to speaker', z.object({ durationSeconds: z.number().int() }), (data) => timerSetDirective(data.durationSeconds))
+    this.addFunction('timer_stop', 'Stops specific timer on speaker', z.object({ id: z.string() }), (data) => timerStopDirective(data.id))
+    this.addFunction('timer_cancel', 'Removes specific timer from speaker', z.object({ id: z.string() }), (data) => timerCancelDirective(data.id))
+    this.addFunction('timer_pause', 'Pauses specific timer on speaker', z.object({ id: z.string() }), (data) => timerPauseDirective(data.id))
+    this.addFunction('timer_resume', 'Resumes specific timer on speaker', z.object({ id: z.string() }), (data) => timerResumeDirective(data.id))
 
     this.addFunction('player_play', 'Starts music, or continues if was paused', z.unknown(), () => playerStartDirectve)
     this.addFunction('player_pause', 'Pause music if it is playing', z.unknown(), () => playerStopDirective)

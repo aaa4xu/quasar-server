@@ -6,6 +6,7 @@ import {
 import { EventEmitter } from 'node:stream'
 import { Event, WebSocket } from 'ws'
 
+import { getLogger } from '../../logger'
 import { ProcessorBackend, ProcessorRequest, ProcessorSession, ProcessorSessionEvents } from '../backend'
 
 export class BasicProcessorBackend implements ProcessorBackend {
@@ -59,6 +60,8 @@ export class BasicProcessorBackend implements ProcessorBackend {
 
 // eslint-disable-next-line unicorn/prefer-event-target
 export class BasicProcessorSession extends EventEmitter<ProcessorSessionEvents> implements ProcessorSession {
+  private readonly logger = getLogger<BasicProcessorSession>()
+
   constructor (private readonly webSocket: WebSocket, span?: Span) {
     super()
 
@@ -68,6 +71,8 @@ export class BasicProcessorSession extends EventEmitter<ProcessorSessionEvents> 
     })
     this.webSocket.addEventListener('message', message => {
       const data = processorServerWebSocketMessage.parse(JSON.parse(message.data.toString()))
+      this.logger.info(`Received from processor: directives: ${JSON.stringify(data.data.directives, undefined, 4)}, text: ${
+        JSON.stringify(data.data.text)}, finished: ${data.data.finished}`)
       if (data.type === 'partialResponse') {
         this.emit('partialResponse', data.data)
       }
@@ -88,6 +93,8 @@ export class BasicProcessorSession extends EventEmitter<ProcessorSessionEvents> 
   }
 
   process (request: ProcessorRequest): Promise<void> {
+    this.logger.info(`Sending to processor: metadata: ${JSON.stringify(request.metadata, undefined, 4)}, text: ${
+      JSON.stringify(request.text)}`)
     return this.send({
       data: {
         ...request,

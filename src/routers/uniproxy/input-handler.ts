@@ -17,8 +17,13 @@ export interface InputHandlerProperties {
   processor: ProcessorBackend
 }
 
-export type InputMetadata = Omit<object, 'deviceState'> & {
-  deviceState?: proto.NAlice.NAliceApi.ITDeviceState
+export type InputMetadata = Omit<object, '_raw'> & {
+  _raw?: {
+    deviceState?: proto.NAlice.NAliceApi.ITDeviceState
+    environmentState?: proto.NAlice.NAliceApi.ITEnvironmentState
+  },
+  alarms?: string
+  timers?: string,
 }
 
 export interface InputResult {
@@ -146,7 +151,10 @@ export class InputHandler {
         }
         await this.session!.process({
           isExternalEvent: true,
-          metadata: input.metadata,
+          metadata: {
+            ...input.metadata,
+            _raw: undefined
+          },
           text: input.data.eventText
         })
         this.requestSent = true
@@ -235,7 +243,10 @@ export class InputHandler {
     }
 
     await this.session.process({
-      metadata: input.metadata,
+      metadata: {
+        ...input.metadata,
+        _raw: undefined
+      },
       text: input.text
     })
     this.requestSent = true
