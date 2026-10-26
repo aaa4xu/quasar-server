@@ -110,8 +110,10 @@ export const ttsPlayPlaceholderDirective = (onFinish?: proto.NAlice.NAliceApi.TD
   }
 })
 
-export const mmSemanticFrame = (payload?: proto.google.protobuf.IStruct, payloadRaw?: Buffer) => ({
+export const mmSemanticFrame = (isLedSilent: boolean,
+  payload?: proto.google.protobuf.IStruct, payloadRaw?: Buffer) => ({
   quasarDirective: {
+    IsLedSilent: isLedSilent,
     Name: '@@mm_semantic_frame',
     Payload: payload,
     PayloadRaw: payloadRaw,

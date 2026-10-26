@@ -1,4 +1,5 @@
 import { Span, startInactiveSpan } from '@sentry/node'
+import { ProcessorProcessWebSocketMessage } from '@v3rt3p/types/processor'
 
 import { ProcessorBackend, ProcessorPartialResponse, ProcessorSession } from '../../backend/backend'
 import { getLogger } from '../../logger'
@@ -7,6 +8,21 @@ import proto from '../../protos/protos'
 import { textToDirectiveMap } from '../alice/base-provider'
 import { DirectiveFunctionProvider, mmSemanticFrame, ttsPlayPlaceholderDirective, WrappedDirective } from '../alice/directives'
 import { continueSessionStage1SemanticFrame } from '../alice/typed-payloads'
+
+export interface AlarmMetadata {
+  currentlyPlaying: boolean
+  days: (number | {
+    day?: number
+    month?: number
+    year?: number
+  })[],
+  id: string
+  time: {
+    hours?: number
+    minutes?: number
+    seconds?: number
+  },
+}
 
 export interface Input {
   metadata: InputMetadata
@@ -17,13 +33,29 @@ export interface InputHandlerProperties {
   processor: ProcessorBackend
 }
 
-export type InputMetadata = Omit<object, '_raw'> & {
-  _raw?: {
-    deviceState?: proto.NAlice.NAliceApi.ITDeviceState
-    environmentState?: proto.NAlice.NAliceApi.ITEnvironmentState
-  },
-  alarms?: string
-  timers?: string,
+export type InputMetadata = {
+  internal: Partial<{
+    age: string
+    alarms: AlarmMetadata[]
+    audioMetadata: object
+    deviceState: proto.NAlice.NAliceApi.ITDeviceState
+    environmentState: proto.NAlice.NAliceApi.ITEnvironmentState
+    gender: string
+    timers: TimerMetadata[]
+  }>,
+  readyToUse: Partial<{
+    alarms: InputMetadataEntry
+    assistantName: InputMetadataEntry
+    inputPersonAge: InputMetadataEntry
+    inputPersonGender: InputMetadataEntry
+    inputPersonVoiceLabel: InputMetadataEntry
+    timers: InputMetadataEntry
+  }>
+}
+
+export interface InputMetadataEntry {
+  description: string
+  value: string
 }
 
 export interface InputResult {
@@ -38,10 +70,9 @@ export type TextInput = Input & {
 }
 
 export type TextInputData = {
-  eventText: string
-  kind: 'event'
-} | {
   kind: 'continue'
+} | {
+  kind: 'dummy'
 } | {
   kind: 'musicFetchNextTrack'
 } | {
@@ -55,6 +86,13 @@ export type TextInputData = {
 } | {
   kind: 'tts'
   text: string
+}
+
+export interface TimerMetadata {
+  currentlyPlaying: boolean
+  duration: number
+  id: string
+  remaining: number
 }
 
 export type VoiceInput = Input & {
@@ -145,20 +183,13 @@ export class InputHandler {
       case 'continue': {
         return await this.getPartialResponseResult(parentSpan)
       }
-      case 'event': {
-        if (!this.session) {
-          await this.openSession(dialogSpan)
+      case 'dummy': {
+        return {
+          dialogFinished: true,
+          directives: [],
+          shouldListen: false,
+          text: null
         }
-        await this.session!.process({
-          isExternalEvent: true,
-          metadata: {
-            ...input.metadata,
-            _raw: undefined
-          },
-          text: input.data.eventText
-        })
-        this.requestSent = true
-        return await this.getPartialResponseResult(parentSpan)
       }
       case 'musicFetchNextTrack': {
         return {
@@ -246,7 +277,7 @@ export class InputHandler {
       metadata: {
         ...input.metadata,
         _raw: undefined
-      },
+      } as unknown as ProcessorProcessWebSocketMessage['data']['metadata'],
       text: input.text
     })
     this.requestSent = true
@@ -283,7 +314,7 @@ export class InputHandler {
       return {
         dialogFinished: false,
         directives: [
-          mmSemanticFrame(continueSessionStage1SemanticFrame)
+          mmSemanticFrame(false, continueSessionStage1SemanticFrame)
         ],
         shouldListen: false,
         text: null

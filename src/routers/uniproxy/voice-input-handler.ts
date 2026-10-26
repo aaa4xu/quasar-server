@@ -48,7 +48,13 @@ export interface VoiceInputHandlerTranscribedEvent {
 }
 
 export interface VoiceInputSpeakerMetadataEvent {
-  metadata: object
+  metadata: InputMetadata
+}
+
+interface AudioMetadata {
+  speakerVerification?: {
+    label?: string
+  }
 }
 
 // eslint-disable-next-line unicorn/prefer-event-target
@@ -58,7 +64,7 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
   private audioSendingLock = new Sema(1)
   private lastTranscribeResult: string = ''
   private readonly logger = getLogger<VoiceInputHandler>()
-  private metadata: InputMetadata = {}
+  private metadata: InputMetadata = { internal: {}, readyToUse: {} }
   private sttSession: null | STTBackendSession = null
   private voiceSpan: null | Span = null
 
@@ -73,7 +79,7 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
     this.sttSession = null
     this.audioDataQueue = []
     this.lastTranscribeResult = ''
-    this.metadata = {}
+    this.metadata = { internal: {}, readyToUse: {} }
 
     this.voiceSpan?.setAttribute('endReason', 'close')
     this.voiceSpan?.end()
@@ -185,9 +191,23 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
   }
 
   private async stop (): Promise<void> {
+    const audioMetadata = await this.audioMetadataSession?.finish() as AudioMetadata | undefined
     this.metadata = {
-      ...this.metadata,
-      ...(await this.audioMetadataSession?.finish())
+      internal: {
+        ...this.metadata.internal,
+        audioMetadata
+      },
+      readyToUse: {
+        ...this.metadata.readyToUse,
+        ...(audioMetadata?.speakerVerification?.label
+          ? {
+              inputPersonVoiceLabel: {
+                description: 'input person voice label (e.g. name)',
+                value: audioMetadata.speakerVerification.label
+              }
+            }
+          : {})
+      }
     }
     this.audioMetadataSession = null
     this.sttSession?.close()
@@ -202,7 +222,7 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
 
   private transcribeFinished (): void {
     const metadata = this.metadata
-    this.metadata = {}
+    this.metadata = { internal: {}, readyToUse: {} }
     this.logger.debug(`VoiceInputHandler transcribe finished: ${this.lastTranscribeResult}`)
     this.emit('finish', {
       metadata: metadata!,

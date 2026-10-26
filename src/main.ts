@@ -17,7 +17,7 @@ import { getEnvironment } from './environment'
 import { getLogger } from './logger'
 import { MusicManager } from './music/manager'
 import proto from './protos/protos'
-import { pushUpdateConfigDirective } from './routers/alice/directives'
+import { pushUpdateConfigDirective, WrappedDirective } from './routers/alice/directives'
 import { registerClckYandexNetRouter } from './routers/clck.yandex.net'
 import { registerMobileproxyPassportYandexNetRouter } from './routers/mobileproxy.passport.yandex.net'
 import { registerOAuthYandexRuRouter } from './routers/oauth.yandex.ru'
@@ -108,6 +108,16 @@ const uniProxyRouter = registerUniproxyAliceYandexNetRouter({
   })
 }, server)
 
+const apiErrorType = z.object({
+  code: z.union([z.literal('DEVICE_NOT_CONNECTED')]).describe('Error code'),
+  text: z.string().optional().describe('Optional error text')
+})
+
+const internalErrorType = z.object({
+  code: z.literal('INTERNAL_SERVER_ERROR'),
+  text: z.string().optional().describe('Optional error text')
+})
+
 const apiServer = new Elysia({
   adapter: node()
 }).use(openapi({
@@ -121,20 +131,30 @@ const apiServer = new Elysia({
     zod: z.toJSONSchema
   }
 }))
-
-function runForConnections (duidOrAll: string, action: (connection: UniProxyConnection) => void) {
-  for (const [duid, connections] of uniProxyRouter.connections) {
-    if (duidOrAll === 'all' || duidOrAll === duid) {
-      for (const connection of connections) {
-        action(connection)
-      }
+  .guard({
+    response: {
+      500: internalErrorType
     }
-  }
+  })
+  .onError(async ({ error, status }) => {
+    status(500, {
+      code: 'INTERNAL_SERVER_ERROR',
+      text: String(error)
+    })
+  })
+
+async function runForConnections (duidOrAll: string,
+  action: (connection: UniProxyConnection) => Promise<void>): Promise<void> {
+  await Promise.all([...uniProxyRouter.connections.entries()
+    .filter(connections => connections[0] === duidOrAll || duidOrAll === 'all')
+    .map(connections => [...connections[1].values()])]
+    .flat().map(connection => action(connection)))
 }
 
 apiServer.get('/devices', async () => {
   const infos = await storage.getStationInfos()
   return infos.map(info => ({
+    connected: (uniProxyRouter.connections.get(info.duid)?.size ?? 0) > 0,
     duid: info.duid,
     name: info.name,
     quasarConfig: info.quasarConfig
@@ -144,27 +164,30 @@ apiServer.get('/devices', async () => {
     summary: 'Get list of devices',
     tags: ['device']
   },
-  response: z.array(z.object({
-    duid: z.string().describe('DUID'),
-    name: z.string().describe('Name'),
-    quasarConfig: quasarConfig.describe('Quasar\'s maind config')
-  }))
+  response: {
+    200: z.array(z.object({
+      connected: z.boolean().describe('Is device connected'),
+      duid: z.string().describe('DUID'),
+      name: z.string().describe('Name'),
+      quasarConfig: quasarConfig.describe('Quasar\'s maind config')
+    }))
+  }
 })
 
-apiServer.post('/devices/:duid/push', async ({ body, params: { duid } }) => {
-  runForConnections(duid, connection => {
-    connection.pushEvent(body.eventText).catch(error => logger.warn(`Failed to push event to UniProxy connection: ${error}`))
+apiServer.post('/devices/:duid/push/text', async ({ body, params: { duid } }) => {
+  await runForConnections(duid, async connection => {
+    await connection.pushTts(body.eventText)
   })
 
   return {}
 }, {
   body: t.Object({
     eventText: t.String({
-      description: 'Event text to be pushed to LLM'
+      description: 'Text to be pushed to TTS'
     })
   }),
   detail: {
-    summary: 'Push event to LLM to be processed',
+    summary: 'Push text to be TTSed',
     tags: ['device']
   },
   params: t.Object({
@@ -172,37 +195,14 @@ apiServer.post('/devices/:duid/push', async ({ body, params: { duid } }) => {
       description: "DUID or 'all' for all devices"
     })
   }),
-  response: t.Object({})
+  response: {
+    200: t.Object({})
+  }
 })
 
-apiServer.post('/devices/:duid/push-raw', async ({ body, params: { duid } }) => {
-  runForConnections(duid, connection => {
-    connection.pushTts(body.eventText).catch(error => logger.warn(`Failed to push raw event to UniProxy connection: ${error}`))
-  })
-
-  return {}
-}, {
-  body: t.Object({
-    eventText: t.String({
-      description: 'Event text to be pushed to TTS'
-    })
-  }),
-  detail: {
-    summary: 'Push event text to be TTSed',
-    tags: ['device']
-  },
-  params: t.Object({
-    duid: t.String({
-      description: "DUID or 'all' for all devices"
-    })
-  }),
-  response: t.Object({})
-})
-
-apiServer.post('/devices/:duid/push-directive', async ({ body, params: { duid } }) => {
-  runForConnections(duid, connection => {
-    connection.pushRawDirectives(proto.NAlice.NAliceApi.TDirective.fromObject(body as { [k: string]: unknown }))
-      .catch(error => logger.warn(`Failed to push raw directive to UniProxy connection: ${error}`))
+apiServer.post('/devices/:duid/push/raw', async ({ body, params: { duid } }) => {
+  await runForConnections(duid, async connection => {
+    await connection.pushRawDirectives(proto.NAlice.NAliceApi.TDirective.fromObject(body as { [k: string]: unknown }))
   })
 
   return {}
@@ -211,7 +211,7 @@ apiServer.post('/devices/:duid/push-directive', async ({ body, params: { duid } 
     description: 'Raw Quasar directive'
   }),
   detail: {
-    summary: 'Push directive to the device',
+    summary: 'Push raw directive to the device',
     tags: ['device']
   },
   params: t.Object({
@@ -219,15 +219,16 @@ apiServer.post('/devices/:duid/push-directive', async ({ body, params: { duid } 
       description: "DUID or 'all' for all devices"
     })
   }),
-  response: t.Object({})
+  response: {
+    200: t.Object({})
+  }
 })
 
 apiServer.patch('/devices/:duid', async ({ body, params: { duid } }) => {
   const info = await storage.updateNameAndQuasarConfig(duid, body.name, body.quasarConfig)
 
-  runForConnections(duid, connection => {
-    connection.pushDirectives(pushUpdateConfigDirective).catch(error =>
-      logger.warn(`Failed to push config update directive to UniProxy connection: ${error}`))
+  await runForConnections(duid, async connection => {
+    await connection.pushDirectives(pushUpdateConfigDirective)
   })
 
   return {
@@ -249,11 +250,138 @@ apiServer.patch('/devices/:duid', async ({ body, params: { duid } }) => {
       description: 'DUID'
     })
   }),
-  response: z.object({
-    duid: z.string().describe('DUID'),
-    name: z.string().describe('Name'),
-    quasarConfig: quasarConfig.describe('Quasar\'s maind config')
-  })
+  response: {
+    200: z.object({
+      duid: z.string().describe('DUID'),
+      name: z.string().describe('Name'),
+      quasarConfig: quasarConfig.describe('Quasar\'s maind config')
+    })
+  }
+})
+
+apiServer.get('/devices/:duid/directives', async ({ params: { duid }, status }) => {
+  const connections = uniProxyRouter.connections.get(duid)
+  if (!connections) {
+    return status(404, {
+      code: 'DEVICE_NOT_CONNECTED'
+    })
+  }
+
+  const connection = connections.values().next().value
+  if (!connection) {
+    return status(404, {
+      code: 'DEVICE_NOT_CONNECTED'
+    })
+  }
+
+  const provider = connection.getDirectiveFunctionProvider()
+  return provider.getSupportedFunctions()
+}, {
+  detail: {
+    summary: 'Get supported device directives',
+    tags: ['device']
+  },
+  params: t.Object({
+    duid: t.String({
+      description: 'DUID'
+    })
+  }),
+  response: {
+    200: z.record(z.string().describe('Directive name'), z.object({
+      arguments: z.unknown().describe('Arguments JSON schema'),
+      description: z.string().describe('Description')
+    })),
+    404: apiErrorType
+  }
+})
+
+apiServer.post('/devices/:duid/push', async ({ body, params: { duid }, status }) => {
+  const connections = uniProxyRouter.connections.get(duid)
+  if (!connections) {
+    return status(404, {
+      code: 'DEVICE_NOT_CONNECTED'
+    })
+  }
+
+  const connection = connections.values().next().value
+  if (!connection) {
+    return status(404, {
+      code: 'DEVICE_NOT_CONNECTED'
+    })
+  }
+
+  const directives: WrappedDirective[] = []
+
+  for (const directive of body) {
+    const wrappedDirective = connection.getDirectiveFunctionProvider().convertToWrappedDirective(directive)
+    if (wrappedDirective) {
+      directives.push(wrappedDirective)
+    }
+  }
+
+  await connection.pushDirectives(...directives)
+
+  return {}
+}, {
+  body: t.Array(t.Object({
+    arguments: t.Unknown({
+      description: 'Arguments'
+    }),
+    name: t.String({
+      description: 'Directive name'
+    })
+  }), {
+    description: 'Array of directives'
+  }),
+  detail: {
+    summary: 'Push directives to the device',
+    tags: ['device']
+  },
+  params: t.Object({
+    duid: t.String({
+      description: 'DUID'
+    }),
+  }),
+  response: {
+    200: z.object({}),
+    404: apiErrorType
+  }
+})
+
+const stateResponse = z.record(z.string().describe('Name'), z.unknown().describe('Value')).describe('state')
+
+apiServer.get('/devices/:duid/state', async ({ params: { duid }, status }) => {
+  const connections = uniProxyRouter.connections.get(duid)
+  if (!connections) {
+    return status(404, {
+      code: 'DEVICE_NOT_CONNECTED'
+    })
+  }
+
+  const connection = connections.values().next().value
+  if (!connection) {
+    return status(404, {
+      code: 'DEVICE_NOT_CONNECTED'
+    })
+  }
+
+  const state = await connection.fetchState()
+
+  return state.internal
+}, {
+  detail: {
+    summary: 'Get device state',
+    tags: ['device']
+  },
+  params: t.Object({
+    duid: t.String({
+      description: 'DUID'
+    }),
+  }),
+  response: {
+    200: stateResponse,
+    404: apiErrorType
+  }
 })
 
 try {

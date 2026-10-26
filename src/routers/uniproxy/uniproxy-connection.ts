@@ -9,9 +9,9 @@ import { MusicManager } from '../../music/manager'
 import { decodeProtobufStruct, getValue } from '../../protobuf'
 import proto from '../../protos/protos'
 import { getDirectiveFunctionProvider } from '../alice/base-provider'
-import { audioPlayDirective, mmSemanticFrame, RawDirective, stackRecoverNextTrackDirective, WrappedDirective } from '../alice/directives'
-import { continueSessionStage2SemanticFrame, externalEventSemanticFrame, ttsSemanticFrame } from '../alice/typed-payloads'
-import { InputHandler, InputMetadata, InputResult, TextInput } from './input-handler'
+import { audioPlayDirective, DirectiveFunctionProvider, mmSemanticFrame, RawDirective, stackRecoverNextTrackDirective, WrappedDirective } from '../alice/directives'
+import { continueSessionStage2SemanticFrame, fetchStateSemanticFrane, ttsSemanticFrame } from '../alice/typed-payloads'
+import { AlarmMetadata, InputHandler, InputMetadata, InputResult, TextInput, TimerMetadata } from './input-handler'
 import { VoiceInputHandler } from './voice-input-handler'
 
 type TServerMessage = proto.NAlice.NAliceApi.ITServerMessage
@@ -38,20 +38,29 @@ export interface UniProxyConnectionParameters {
   tts: TTSBackend
 }
 
+const spotterToAssistantNameMapping: Record<string, string> = {
+  alisa: 'Алиса',
+  yasmina: 'Ясмина'
+}
+
 export class UniProxyConnection {
   private dialogId: null | string = null
   private dialogSpan: Span | undefined = undefined
 
+  private readonly directiveFunctionProvider: DirectiveFunctionProvider
+
+  private readonly fetchStateRequestsResolvers: Map<string, (state: InputMetadata) => void> = new Map()
+
   private inputHandler: InputHandler
 
   private inputHandlerOpenSessionPromise: null | Promise<void> = null
-
   private inputSpan: Span | undefined = undefined
-
   private lastOutputAudioStreamId: number = 1024
   private readonly logger = getLogger<UniProxyConnection>()
   private readonly sendLock = new Sema(1)
+
   private voiceInputHandler: VoiceInputHandler
+
   private voiceInputReferenceMessageId: string = ''
 
   private voiceInputReferenceRequestId: string = ''
@@ -64,16 +73,37 @@ export class UniProxyConnection {
     private readonly deviceId: string,
     private readonly parameters: UniProxyConnectionParameters) {
     this.voiceInputHandler = new VoiceInputHandler(parameters)
+    this.directiveFunctionProvider = getDirectiveFunctionProvider('TODO')
     this.inputHandler = new InputHandler({
       ...parameters,
-      directiveFunctionProvider: getDirectiveFunctionProvider('TODO')
+      directiveFunctionProvider: this.directiveFunctionProvider
     })
 
     this.setupWebSocketHandlers()
     this.setupVoiceInputHandlers()
   }
 
-  async processWrappedDirectives (directives: WrappedDirective[], metadata?: InputMetadata): Promise<RawDirective[]> {
+  async fetchState (): Promise<InputMetadata> {
+    const requestId = randomUUID()
+
+    const promise = Promise.withResolvers<InputMetadata>()
+
+    this.fetchStateRequestsResolvers.set(requestId, state => promise.resolve(state))
+    await this.pushDirectives(mmSemanticFrame(true, fetchStateSemanticFrane(requestId)))
+    setTimeout(() => {
+      this.fetchStateRequestsResolvers.delete(requestId)
+      promise.reject(new Error('timeout'))
+    }, 5000) // TODO 5s for now
+
+    return promise.promise
+  }
+
+  getDirectiveFunctionProvider (): DirectiveFunctionProvider {
+    return this.directiveFunctionProvider
+  }
+
+  async processWrappedDirectives (directives: WrappedDirective[],
+    metadata?: InputMetadata): Promise<RawDirective[]> {
     const rawDirectives: RawDirective[] = []
     for (const directive of directives) {
       if (directive.quasarDirective) {
@@ -122,7 +152,7 @@ export class UniProxyConnection {
             break
           }
           case 'music_stop': {
-            const position = metadata?._raw?.deviceState?.AudioPlayer?.OffsetMs
+            const position = metadata?.internal.deviceState?.AudioPlayer?.OffsetMs
             if (position) {
               this.parameters.musicManager.savePosition(this.deviceId, position)
             }
@@ -139,16 +169,12 @@ export class UniProxyConnection {
     await this.pushRawDirectives(...rawDirectives)
   }
 
-  async pushEvent (text: string): Promise<void> {
-    await this.pushDirectives(mmSemanticFrame(externalEventSemanticFrame(text)))
-  }
-
   async pushRawDirectives (...directives: proto.NAlice.NAliceApi.ITDirective[]): Promise<void> {
     await this.sendPush(directives)
   }
 
   async pushTts (text: string): Promise<void> {
-    await this.pushDirectives(mmSemanticFrame(ttsSemanticFrame(text)))
+    await this.pushDirectives(mmSemanticFrame(false, ttsSemanticFrame(text)))
   }
 
   private closeConnection (): void {
@@ -274,8 +300,20 @@ export class UniProxyConnection {
 
     await this.voiceInputHandler.handleVoiceInputSpeakerMetadataEvent({
       metadata: {
-        age: ageClassNames[biometryInfo.find(item => item.Tag === 'children')!.ClassName!] ?? 'unknown',
-        gender: genderClassNames[biometryInfo.find(item => item.Tag === 'gender')!.ClassName!] ?? 'unknown',
+        internal: {
+          age: ageClassNames[biometryInfo.find(item => item.Tag === 'children')!.ClassName!] ?? 'unknown',
+          gender: genderClassNames[biometryInfo.find(item => item.Tag === 'gender')!.ClassName!] ?? 'unknown',
+        },
+        readyToUse: {
+          inputPersonAge: {
+            description: 'age of person who talked to you',
+            value: ageClassNames[biometryInfo.find(item => item.Tag === 'children')!.ClassName!] ?? 'unknown',
+          },
+          inputPersonGender: {
+            description: 'gender of person who talked to you',
+            value: genderClassNames[biometryInfo.find(item => item.Tag === 'gender')!.ClassName!] ?? 'unknown',
+          }
+        }
       }
     })
   }
@@ -347,14 +385,6 @@ export class UniProxyConnection {
           },
           metadata
         }
-      } else if (getValue(payload, 'string', 'typed_semantic_frame', 'external_event_semantic_frame', 'event')) {
-        textInput = {
-          data: {
-            eventText: getValue(payload, 'string', 'typed_semantic_frame', 'external_event_semantic_frame', 'event')!,
-            kind: 'event'
-          },
-          metadata
-        }
       } else if (getValue(payload, 'string', 'typed_semantic_frame', 'tts_semantic_frame', 'text')) {
         textInput = {
           data: {
@@ -364,7 +394,20 @@ export class UniProxyConnection {
           metadata
         }
       } else if (getValue(payload, 'any', 'typed_semantic_frame', 'continue_session_stage1_semantic_frame')) {
-        await this.pushDirectives(mmSemanticFrame(continueSessionStage2SemanticFrame(this.dialogId)))
+        await this.pushDirectives(mmSemanticFrame(false, continueSessionStage2SemanticFrame(this.dialogId)))
+      } else if (getValue(payload, 'any', 'typed_semantic_frame', 'fetch_state_semantic_frame')) {
+        const requestId = getValue(payload, 'string', 'typed_semantic_frame', 'fetch_state_semantic_frame', 'id')!
+        const resolver = this.fetchStateRequestsResolvers.get(requestId)
+        this.fetchStateRequestsResolvers.delete(requestId)
+        if (resolver) {
+          resolver(metadata)
+        }
+        textInput = {
+          data: {
+            kind: 'dummy'
+          },
+          metadata
+        }
       } else if (getValue(payload, 'any', 'typed_semantic_frame', 'continue_session_stage2_semantic_frame')) {
         dialogId = getValue(payload, 'string', 'typed_semantic_frame', 'continue_session_stage2_semantic_frame', 'dialog_id')
         textInput = {
@@ -531,26 +574,8 @@ export class UniProxyConnection {
 
   private parseQuasarMetadata (deviceState: proto.NAlice.NAliceApi.ITDeviceState,
     environmentState: proto.NAlice.NAliceApi.ITEnvironmentState): InputMetadata {
-    const timers: {
-      currentlyPlaying: boolean
-      duration: number
-      id: string
-      remaining: number
-    }[] = []
-    const alarms: {
-      currentlyPlaying: boolean
-      days: (number | {
-        day?: number
-        month?: number
-        year?: number
-      })[],
-      id: string
-      time: {
-        hours?: number
-        minutes?: number
-        seconds?: number
-      },
-    }[] = []
+    const timers: TimerMetadata[] = []
+    const alarms: AlarmMetadata[] = []
 
     const alarmCapability = findCapabilityInEnvironmentState(environmentState,
       proto.NAlice.TCapability.ECapabilityType.AlarmCapabilityType, proto.NAlice.TAlarmCapability.decode)
@@ -594,12 +619,26 @@ export class UniProxyConnection {
     }
 
     return {
-      _raw: {
+      internal: {
+        alarms,
         deviceState,
-        environmentState
+        environmentState,
+        timers
       },
-      alarms: JSON.stringify(alarms),
-      timers: JSON.stringify(timers)
+      readyToUse: {
+        alarms: {
+          description: 'current set of alarms on speaker',
+          value: JSON.stringify(alarms),
+        },
+        assistantName: {
+          description: 'name of assistant (YOU)',
+          value: spotterToAssistantNameMapping[deviceState?.DeviceConfig?.Spotter ?? ''] ?? 'unknown'
+        },
+        timers: {
+          description: 'current set of timers on speaker',
+          value: JSON.stringify(timers),
+        }
+      },
     }
   }
 
