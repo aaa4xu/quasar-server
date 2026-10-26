@@ -70,14 +70,6 @@ app.use(bodyParser.raw({
   type: 'text/yandex-token'
 }))
 
-const server = app.listen(environment.PORT, error => {
-  if (error) {
-    logger.error(`Quasar failed to start on :${environment.PORT}: ${error}`)
-    return
-  }
-  logger.info(`Started quasar on :${environment.PORT}`)
-})
-
 registerClckYandexNetRouter(app)
 registerReportAppMetricaYandexNetRouter(app)
 registerQuasarYandexNetRouter(app, {
@@ -91,12 +83,21 @@ registerStartupMobileYandexNetRouter(app)
 registerScbhYandexNetRouter(app)
 registerRpcAliceYandexNetRouter(app)
 
+const server = app.listen(environment.PORT, error => {
+  if (error) {
+    logger.error(`Quasar failed to start on :${environment.PORT}: ${error}`)
+    return
+  }
+  logger.info(`Started quasar on :${environment.PORT}`)
+})
+
 const uniProxyRouter = registerUniproxyAliceYandexNetRouter({
   audioMetadata: new BufferedAudioMetadataBackend(environment.AUDIO_METADATA_URLS),
   musicManager: new MusicManager(environment.MUSIC_SERVICE_BASIC_URL
     ? new BasicMusicBackend(environment.MUSIC_SERVICE_BASIC_URL)
     : new StubMusicBackend()),
   processor: new BasicProcessorBackend(environment.PROCESSOR_BASIC_URL),
+  storage,
   stt: new GigaAMSTTBackend(environment.STT_GIGAAM_URL),
   tts: new OpenAITTSBackend(new OpenAI({
     apiKey: environment.TTS_OPENAI_API_KEY,
@@ -107,6 +108,11 @@ const uniProxyRouter = registerUniproxyAliceYandexNetRouter({
     voice: environment.TTS_OPENAI_VOICE
   })
 }, server)
+
+app.use((request, response) => {
+  logger.debug(`Got unknown request: ${request.method} ${request.url}`)
+  response.status(500).end()
+})
 
 const apiErrorType = z.object({
   code: z.union([z.literal('DEVICE_NOT_CONNECTED')]).describe('Error code'),
@@ -384,6 +390,18 @@ apiServer.get('/devices/:duid/state', async ({ params: { duid }, status }) => {
   }
 })
 
+const functionStateServerApp = express()
+
+functionStateServerApp.use(express.json())
+
+const functionStateServerServer = functionStateServerApp.listen(environment.FUNCTION_STATE_SERVER_PORT, error => {
+  if (error) {
+    logger.error(`function-state-server failed to start on :${environment.FUNCTION_STATE_SERVER_PORT}: ${error}`)
+    return
+  }
+  logger.info(`Started function-state-server on :${environment.FUNCTION_STATE_SERVER_PORT}`)
+})
+
 try {
   apiServer.listen(environment.API_PORT, () => {
     logger.info(`Started API on :${environment.API_PORT}`)
@@ -392,16 +410,12 @@ try {
   logger.error(`API failed to start on :${environment.API_PORT}: ${error}`)
 }
 
-app.use((request, response) => {
-  logger.debug(`Got unknown request: ${request.method} ${request.url}`)
-  response.status(500).end()
-})
-
 process.removeAllListeners('SIGINT')
 
 process.on('SIGINT', () => {
   logger.info('Stopping...')
   server.close()
+  functionStateServerServer.close()
   if (apiServer.server) {
     apiServer.stop()
   }

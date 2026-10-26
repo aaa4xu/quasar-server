@@ -38,6 +38,7 @@ export type InputMetadata = {
     age: string
     alarms: AlarmMetadata[]
     audioMetadata: object
+    deviceId: string
     deviceState: proto.NAlice.NAliceApi.ITDeviceState
     environmentState: proto.NAlice.NAliceApi.ITEnvironmentState
     gender: string
@@ -46,6 +47,7 @@ export type InputMetadata = {
   readyToUse: Partial<{
     alarms: InputMetadataEntry
     assistantName: InputMetadataEntry
+    deviceName: InputMetadataEntry
     inputPersonAge: InputMetadataEntry
     inputPersonGender: InputMetadataEntry
     inputPersonVoiceLabel: InputMetadataEntry

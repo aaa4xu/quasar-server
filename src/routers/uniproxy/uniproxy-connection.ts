@@ -8,6 +8,7 @@ import { getLogger } from '../../logger'
 import { MusicManager } from '../../music/manager'
 import { decodeProtobufStruct, getValue } from '../../protobuf'
 import proto from '../../protos/protos'
+import { StationInfoProvider } from '../../storage/types'
 import { getDirectiveFunctionProvider } from '../alice/base-provider'
 import { audioPlayDirective, DirectiveFunctionProvider, mmSemanticFrame, RawDirective, stackRecoverNextTrackDirective, WrappedDirective } from '../alice/directives'
 import { continueSessionStage2SemanticFrame, ttsSemanticFrame } from '../alice/typed-payloads'
@@ -34,6 +35,7 @@ export interface UniProxyConnectionParameters {
   audioMetadata: AudioMetadataBackend
   musicManager: MusicManager
   processor: ProcessorBackend
+  storage: StationInfoProvider
   stt: STTBackend
   tts: TTSBackend
 }
@@ -71,9 +73,10 @@ export class UniProxyConnection {
 
   constructor (private readonly webSocket: WebSocket,
     private readonly deviceId: string,
+    private readonly platform: string,
     private readonly parameters: UniProxyConnectionParameters) {
     this.voiceInputHandler = new VoiceInputHandler(parameters)
-    this.directiveFunctionProvider = getDirectiveFunctionProvider('TODO')
+    this.directiveFunctionProvider = getDirectiveFunctionProvider(platform)
     this.inputHandler = new InputHandler({
       ...parameters,
       directiveFunctionProvider: this.directiveFunctionProvider
@@ -388,7 +391,7 @@ export class UniProxyConnection {
     const syncPushResponse = clientMessage.Event!.SyncPushResponse!.SyncResponse!
     const requestId = clientMessage.Event!.Header!.RefMessageId!
 
-    const metadata = this.parseQuasarMetadata(syncPushResponse.GetDeviceStateResponse!.DeviceState!,
+    const metadata = await this.parseQuasarMetadata(syncPushResponse.GetDeviceStateResponse!.DeviceState!,
       syncPushResponse.GetDeviceStateResponse!.EnvironmentState!)
 
     const resolver = this.fetchStateRequestsResolvers.get(requestId)
@@ -407,7 +410,7 @@ export class UniProxyConnection {
 
     const event = clientMessage.Event!.TextInput!.Request!.Event!
 
-    const metadata = this.parseQuasarMetadata(
+    const metadata = await this.parseQuasarMetadata(
       proto.NAlice.NAliceApi.TDeviceState.decode(
         clientMessage.Event!.TextInput!.Request!.DeviceStateRaw!),
       proto.NAlice.NAliceApi.TEnvironmentState.decode(
@@ -563,7 +566,7 @@ export class UniProxyConnection {
     this.voiceInputReferenceRequestId = voiceInputHeader.RequestId!
     this.voiceInputReferenceSequenceNumber = voiceInputHeader.SequenceNumber!
     this.voiceInputHandler.handleVoiceInputEvent({
-      metadata: this.parseQuasarMetadata(
+      metadata: await this.parseQuasarMetadata(
         proto.NAlice.NAliceApi.TDeviceState.decode(
           clientMessage.Event!.VoiceInput!.Request!.DeviceStateRaw!),
         proto.NAlice.NAliceApi.TEnvironmentState.decode(
@@ -597,8 +600,8 @@ export class UniProxyConnection {
     })
   }
 
-  private parseQuasarMetadata (deviceState: proto.NAlice.NAliceApi.ITDeviceState,
-    environmentState: proto.NAlice.NAliceApi.ITEnvironmentState): InputMetadata {
+  private async parseQuasarMetadata (deviceState: proto.NAlice.NAliceApi.ITDeviceState,
+    environmentState: proto.NAlice.NAliceApi.ITEnvironmentState): Promise<InputMetadata> {
     const timers: TimerMetadata[] = []
     const alarms: AlarmMetadata[] = []
 
@@ -643,9 +646,12 @@ export class UniProxyConnection {
       }
     }
 
+    const deviceInfo = await this.parameters.storage.getInfo(this.deviceId, this.platform)
+
     return {
       internal: {
         alarms,
+        deviceId: this.deviceId,
         deviceState,
         environmentState,
         timers
@@ -658,6 +664,10 @@ export class UniProxyConnection {
         assistantName: {
           description: 'name of assistant (YOU)',
           value: spotterToAssistantNameMapping[deviceState?.DeviceConfig?.Spotter ?? ''] ?? 'unknown'
+        },
+        deviceName: {
+          description: 'current smart speaker name',
+          value: deviceInfo.name
         },
         timers: {
           description: 'current set of timers on speaker',

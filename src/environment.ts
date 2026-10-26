@@ -15,6 +15,8 @@ const environmentType = z.object({
 
   AUDIO_METADATA_URLS: z.string().default('').transform(urls => urls.split(',').filter(Boolean)),
 
+  FUNCTION_STATE_SERVER_PORT: z.string().default('31114').transform(value => Number.parseInt(value)),
+
   GLAGOL_JWT_KEY: z.string().default(randomBytes(16).toString('hex')),
 
   MUSIC_SERVICE_BASIC_URL: z.url().optional(),

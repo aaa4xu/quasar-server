@@ -30,6 +30,7 @@ export function registerUniproxyAliceYandexNetRouter (parameters: UniProxyConnec
     logger.debug('Got WebSocket connection')
 
     const deviceId = String(request.headers['x-uprx-device-id']) ?? 'unknown'
+    const platform = String(request.headers['x-uprx-device-model']) ?? 'unknown'
     if (!router.connections.has(deviceId)) {
       router.connections.set(deviceId, new Set())
     }
@@ -39,7 +40,7 @@ export function registerUniproxyAliceYandexNetRouter (parameters: UniProxyConnec
       throw new Error('wut?')
     }
 
-    const connection = new UniProxyConnection(websocket, deviceId, parameters)
+    const connection = new UniProxyConnection(websocket, deviceId, platform, parameters)
     websocket.on('close', () => {
       set.delete(connection)
       logger.warn('UniProxy WebSocket closed')
